@@ -1,5 +1,9 @@
 # acron
 
+## Development
+
+Go project. The toolchain (go, gofumpt, golangci-lint, dprint, yamlfmt, yamllint) lives in the nix devshell, so run targets through it: `nix develop -c make help` lists the targets, and verify changes with `nix develop -c make lint && nix develop -c make test` before committing.
+
 ## Agent skills
 
 ### Issue tracker

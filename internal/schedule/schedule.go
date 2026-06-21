@@ -22,9 +22,29 @@ type CalendarInterval struct {
 // Lists, ranges, and steps (",", "-", "/") are not supported yet; they require
 // enumerating into multiple match dicts and will be added later.
 func ToLaunchd(expr string) ([]CalendarInterval, error) {
+	ci, err := parse(expr)
+	if err != nil {
+		return nil, err
+	}
+	return []CalendarInterval{ci}, nil
+}
+
+// ToSystemd translates a 5-field cron expression into a systemd OnCalendar
+// value (`DOW *-MM-DD HH:MM:00`). It shares the field parser with ToLaunchd, so
+// lists, ranges, and steps are rejected identically until calendar enumeration
+// lands.
+func ToSystemd(expr string) (string, error) {
+	ci, err := parse(expr)
+	if err != nil {
+		return "", err
+	}
+	return ci.onCalendar(), nil
+}
+
+func parse(expr string) (CalendarInterval, error) {
 	fields := strings.Fields(expr)
 	if len(fields) != 5 {
-		return nil, fmt.Errorf("schedule %q: expected 5 cron fields, got %d", expr, len(fields))
+		return CalendarInterval{}, fmt.Errorf("schedule %q: expected 5 cron fields, got %d", expr, len(fields))
 	}
 
 	var ci CalendarInterval
@@ -43,11 +63,31 @@ func ToLaunchd(expr string) ([]CalendarInterval, error) {
 	for _, spec := range specs {
 		value, err := parseField(spec.field, spec.min, spec.max)
 		if err != nil {
-			return nil, fmt.Errorf("schedule %q: %s: %w", expr, spec.name, err)
+			return CalendarInterval{}, fmt.Errorf("schedule %q: %s: %w", expr, spec.name, err)
 		}
 		*spec.dst = value
 	}
-	return []CalendarInterval{ci}, nil
+	return ci, nil
+}
+
+func (ci CalendarInterval) onCalendar() string {
+	weekdayNames := [...]string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+	var b strings.Builder
+	if ci.Weekday != nil {
+		b.WriteString(weekdayNames[*ci.Weekday])
+		b.WriteByte(' ')
+	}
+	fmt.Fprintf(&b, "*-%s-%s %s:%s:00",
+		calendarField(ci.Month), calendarField(ci.Day),
+		calendarField(ci.Hour), calendarField(ci.Minute))
+	return b.String()
+}
+
+func calendarField(value *int) string {
+	if value == nil {
+		return "*"
+	}
+	return fmt.Sprintf("%02d", *value)
 }
 
 func parseField(field string, min, max int) (*int, error) {

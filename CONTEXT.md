@@ -1,0 +1,37 @@
+# acron
+
+A command-line runtime for unattended agent runs that happens to be scheduled cross-OS. acron translates a Job into the native OS scheduler (systemd timer on Linux, launchd on macOS) and stays in the runtime path. Its reason to exist is not cross-OS scheduling (that is just the delivery mechanism) but owning three things an ordinary cron job cannot do well for a long-running agent: overlap prevention, timeout, and log capture with run history. Around those pillars sits an ergonomics layer (one declarative config, easy env/PATH/keys, working directory as a field) that makes scheduling a single agent run painless.
+
+## Language
+
+**Agent**:
+The underlying coding-agent CLI that acron triggers (e.g. Claude Code, Codex, opencode). acron is agent-agnostic: it treats the agent as a command to invoke.
+_Avoid_: Assistant, model, bot
+
+**Run**:
+A single execution of an agent triggered by the scheduler at a fired time. A Run ends with a status: `success`, `failure`, `timeout`, or `skipped` (the firing was dropped because the previous Run still held the lock).
+_Avoid_: Execution, invocation, trigger (as a noun)
+
+**Run history**:
+The append-only record of a Job's past Runs (start, end, exit code, status, duration, log path), kept as `history.jsonl` alongside the per-Run log files. What `acron status` and `acron logs` read.
+_Avoid_: Audit log, journal
+
+**Job**:
+A single scheduled agent invocation: a schedule plus the agent command, prompt, and working directory to run when it fires. The central entity of acron.
+_Avoid_: Task, cron entry, timer
+
+**Config**:
+The single TOML file declaring all Jobs. Defaults to `~/.config/acron/config.toml`; overridable with the `ACRON_CONFIG` environment variable. The source of truth from which OS scheduler units are derived.
+_Avoid_: Manifest, jobfile, crontab
+
+**Apply**:
+The reconcile operation (`acron apply`) that makes the OS scheduler units match the Config: creating, updating, and removing units so they agree with the declared Jobs. Auto-prunes acron-owned units no longer in the Config.
+_Avoid_: Sync, install, reload
+
+**Destroy**:
+The teardown operation (`acron destroy`) that removes all acron-owned units from the current machine while leaving the Config intact, so a later `apply` reinstalls them.
+_Avoid_: Uninstall, purge, clean
+
+**Schedule**:
+A Job's firing times, expressed as a cron expression (calendar/wall-clock semantics). acron translates it into the native scheduler form (systemd `OnCalendar`, launchd `StartCalendarInterval`).
+_Avoid_: Timer, interval, frequency

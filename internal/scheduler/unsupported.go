@@ -1,4 +1,4 @@
-//go:build !darwin
+//go:build !darwin && !linux
 
 package scheduler
 
@@ -8,7 +8,7 @@ import (
 	"github.com/wkentaro/acron/internal/config"
 )
 
-var errUnsupported = errors.New("acron currently supports macOS (launchd) only; systemd support is not implemented yet")
+var errUnsupported = errors.New("acron supports macOS (launchd) and Linux (systemd --user) only")
 
 func Apply(_ *config.Config, _ bool) (*Plan, error) {
 	return nil, errUnsupported

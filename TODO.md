@@ -17,11 +17,11 @@ Roadmap for the work remaining after the macOS (launchd) runtime. See
 
 ### Linux / systemd
 
-- [ ] Implement the `systemd --user` scheduler (replace
+- [x] Implement the `systemd --user` scheduler (replace
       `internal/scheduler/unsupported.go`): generate `.service` + `.timer`,
       `daemon-reload`, `enable --now`, and prune within acron's namespace.
-- [ ] cron → systemd `OnCalendar` translation.
-- [ ] Catch-up: `Persistent=true` on the timer (launchd already catches up).
+- [x] cron → systemd `OnCalendar` translation.
+- [x] Catch-up: `Persistent=true` on the timer (launchd already catches up).
 
 ### Schedule completeness
 

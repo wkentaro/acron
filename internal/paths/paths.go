@@ -53,6 +53,30 @@ func PlistPath(job string) string {
 	return filepath.Join(LaunchAgentsDir(), PlistLabel(job)+".plist")
 }
 
+func SystemdUserDir() string {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "systemd", "user")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "systemd", "user")
+}
+
+func ServiceName(job string) string {
+	return "acron-" + job + ".service"
+}
+
+func TimerName(job string) string {
+	return "acron-" + job + ".timer"
+}
+
+func ServicePath(job string) string {
+	return filepath.Join(SystemdUserDir(), ServiceName(job))
+}
+
+func TimerPath(job string) string {
+	return filepath.Join(SystemdUserDir(), TimerName(job))
+}
+
 func Self() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {

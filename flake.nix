@@ -12,8 +12,7 @@
         "x86_64-darwin"
         "aarch64-darwin"
       ];
-      forAllSystems =
-        f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
+      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in
     {
       devShells = forAllSystems (pkgs: {
@@ -27,6 +26,18 @@
         };
       });
 
-      formatter = forAllSystems (pkgs: pkgs.nixfmt-rfc-style);
+      formatter = forAllSystems (
+        pkgs:
+        pkgs.writeShellApplication {
+          name = "nixfmt-tree";
+          runtimeInputs = [
+            pkgs.findutils
+            pkgs.nixfmt
+          ];
+          text = ''
+            find "''${@:-.}" -name '*.nix' -type f -exec nixfmt {} +
+          '';
+        }
+      );
     };
 }

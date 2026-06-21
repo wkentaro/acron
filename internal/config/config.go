@@ -11,6 +11,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/robfig/cron/v3"
+	"github.com/wkentaro/acron/internal/paths"
 )
 
 type Job struct {
@@ -114,7 +115,7 @@ func validateJob(job Job, index int, seen map[string]bool) []string {
 
 	if job.Cwd == "" {
 		report("cwd is required")
-	} else if dir := expandHome(job.Cwd); !isDir(dir) {
+	} else if dir := paths.ExpandHome(job.Cwd); !isDir(dir) {
 		report(fmt.Sprintf("cwd does not exist: %s", dir))
 	}
 
@@ -123,16 +124,6 @@ func validateJob(job Job, index int, seen map[string]bool) []string {
 	}
 
 	return problems
-}
-
-func expandHome(path string) string {
-	if path == "~" || strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			return filepath.Join(home, strings.TrimPrefix(path, "~"))
-		}
-	}
-	return path
 }
 
 func isDir(path string) bool {

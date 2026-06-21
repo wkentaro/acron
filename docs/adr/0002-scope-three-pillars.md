@@ -8,6 +8,6 @@ acron's value is not generalizing a schedule across systemd and launchd (a wrapp
 
 Around these sits an ergonomics layer that is not unique but is the reason to reach for acron: kill cron-tedium with one declarative config, make env/PATH/keys for the headless context easy, expose working directory as a field, and generate the cross-OS units. Cross-OS scheduling is the delivery mechanism, not the point.
 
-Explicitly out of scope as pillars (considered and demoted): *guaranteeing non-interactivity* is the user's own agent flag (`claude -p`, `codex exec`, `opencode run`), not acron's job; acron only runs the agent with stdin from `/dev/null` so a misconfigured job fails fast instead of hanging, which folds into the timeout. *Working directory* is a config-ergonomics field, not a pillar (both schedulers already support it).
+Explicitly out of scope as pillars (considered and demoted): _guaranteeing non-interactivity_ is the user's own agent flag (`claude -p`, `codex exec`, `opencode run`), not acron's job; acron only runs the agent with stdin from `/dev/null` so a misconfigured job fails fast instead of hanging, which folds into the timeout. _Working directory_ is a config-ergonomics field, not a pillar (both schedulers already support it).
 
 Every pillar requires acron to stay in the runtime path, so this confirms ADR-0001.

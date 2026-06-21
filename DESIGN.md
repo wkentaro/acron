@@ -96,15 +96,15 @@ atomically (no partial apply) on:
 
 ## CLI
 
-| Command | Purpose |
-| --- | --- |
-| `acron apply [--dry-run]` | Reconcile OS units to the Config. |
-| `acron destroy` | Remove all acron-owned units from this machine; keep the Config. |
-| `acron run <job>` | The entry the scheduler invokes; also runs a Job now, for testing. |
-| `acron list` | List Jobs from the Config (name, schedule, next fire, enabled). |
-| `acron status` | Table of each Job's last Run status and time (reads Run history). |
-| `acron logs <job> [--run <ts>] [--list]` | Show a Run's captured output. |
-| `acron edit` | Open the Config in `$EDITOR`, validate on save. |
+| Command                                  | Purpose                                                            |
+| ---------------------------------------- | ------------------------------------------------------------------ |
+| `acron apply [--dry-run]`                | Reconcile OS units to the Config.                                  |
+| `acron destroy`                          | Remove all acron-owned units from this machine; keep the Config.   |
+| `acron run <job>`                        | The entry the scheduler invokes; also runs a Job now, for testing. |
+| `acron list`                             | List Jobs from the Config (name, schedule, next fire, enabled).    |
+| `acron status`                           | Table of each Job's last Run status and time (reads Run history).  |
+| `acron logs <job> [--run <ts>] [--list]` | Show a Run's captured output.                                      |
+| `acron edit`                             | Open the Config in `$EDITOR`, validate on save.                    |
 
 Verb choice follows the on-demand declarative-reconcile idiom (`apply`/`destroy`
 from Terraform; `apply` also matches chezmoi). `install`/`uninstall`/`sync` were

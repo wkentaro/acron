@@ -15,6 +15,8 @@ var (
 	argStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))            // cyan
 	commentStyle = lipgloss.NewStyle().Faint(true)                                // dim
 	errorStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1")) // bold red
+	addStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))            // green
+	removeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))            // red
 )
 
 type row struct {

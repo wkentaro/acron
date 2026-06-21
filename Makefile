@@ -32,8 +32,11 @@ lint:  # Lint code and check formatting
 	$(call exec,go vet ./...)
 	$(call exec,golangci-lint run)
 	$(call exec,dprint check)
+	$(call exec,yamlfmt -lint .)
+	$(call exec,yamllint .)
 
 format:  # Format code
 	$(call exec,gofumpt -w .)
 	$(call exec,dprint fmt)
+	$(call exec,yamlfmt .)
 	$(call exec,nix fmt)

@@ -22,6 +22,8 @@
             pkgs.gofumpt
             pkgs.golangci-lint
             pkgs.dprint
+            pkgs.yamlfmt
+            pkgs.yamllint
           ];
         };
       });

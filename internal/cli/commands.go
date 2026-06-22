@@ -1,9 +1,13 @@
 package cli
 
 import (
+	"bufio"
+	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -17,7 +21,11 @@ import (
 )
 
 func loadConfig() (*config.Config, error) {
-	cfg, err := config.Load(config.DefaultPath())
+	return loadAndValidate(config.DefaultPath())
+}
+
+func loadAndValidate(path string) (*config.Config, error) {
+	cfg, err := config.Load(path)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +115,7 @@ func newEditCmd() *cobra.Command {
 		Short: "Open the config in $EDITOR",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
-			return fmt.Errorf("edit is not implemented yet")
+			return runEdit()
 		},
 	}
 }
@@ -279,6 +287,122 @@ func newestLog(job string) (string, error) {
 		return "", fmt.Errorf("no runs for job %q", job)
 	}
 	return newest, nil
+}
+
+func runEdit() error {
+	path := config.DefaultPath()
+	initial, err := initialBuffer(path)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+
+	tmpPath, err := writeTempConfig(filepath.Dir(path), initial)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		if err := openInEditor(tmpPath); err != nil {
+			return err
+		}
+		if _, verr := loadAndValidate(tmpPath); verr != nil {
+			fmt.Fprintln(os.Stderr, verr)
+			retry, perr := promptRetry(scanner)
+			if perr != nil {
+				return perr
+			}
+			if !retry {
+				return fmt.Errorf("edit aborted; %s unchanged", path)
+			}
+			continue
+		}
+		break
+	}
+
+	edited, err := os.ReadFile(tmpPath)
+	if err != nil {
+		return err
+	}
+	if bytes.Equal(edited, initial) {
+		fmt.Println("No changes.")
+		return nil
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	fmt.Printf("Saved %s\n", path)
+	return nil
+}
+
+func initialBuffer(path string) ([]byte, error) {
+	const configTemplate = `# acron config: each [[job]] schedules an agent to run on a cron schedule.
+# Uncomment the example below, edit the values, and save. Field docs:
+# https://github.com/wkentaro/acron
+#
+# [[job]]
+# name     = "nightly-triage"             # required, unique, [a-z0-9_-]
+# schedule = "0 2 * * *"                  # required, 5-field cron
+# agent    = ["claude", "-p", "{prompt}"] # required argv; {prompt} is substituted
+# prompt   = "Triage open issues"         # required
+# cwd      = "~/src/acron"                # required, absolute or ~-expanded
+# enabled  = true                         # optional, default true
+# timeout  = "1h"                         # optional, default "1h"; 0 disables
+# env      = { TZ = "Asia/Tokyo" }        # optional, extra environment vars
+`
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return []byte(configTemplate), nil
+	}
+	return data, err
+}
+
+func writeTempConfig(dir string, content []byte) (string, error) {
+	tmp, err := os.CreateTemp(dir, ".config.*.toml")
+	if err != nil {
+		return "", err
+	}
+	if _, err := tmp.Write(content); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmp.Name())
+		return "", err
+	}
+	return tmp.Name(), nil
+}
+
+func openInEditor(path string) error {
+	parts := append(strings.Fields(resolveEditor()), path)
+	cmd := exec.Command(parts[0], parts[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func resolveEditor() string {
+	for _, env := range []string{"VISUAL", "EDITOR"} {
+		if v := strings.TrimSpace(os.Getenv(env)); v != "" {
+			return v
+		}
+	}
+	return "vi"
+}
+
+func promptRetry(scanner *bufio.Scanner) (bool, error) {
+	fmt.Fprint(os.Stderr, "Return to edit? [Y/n] ")
+	if !scanner.Scan() {
+		return false, scanner.Err()
+	}
+	answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
+	return answer == "" || answer == "y" || answer == "yes", nil
 }
 
 func printPlan(plan *scheduler.Plan, dryRun bool) {

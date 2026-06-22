@@ -82,6 +82,26 @@ func Destroy() (*Plan, error) {
 	return plan, nil
 }
 
+func jobApplyState(job config.Job, self string, base map[string]string, installed bool) (ApplyState, error) {
+	if !job.IsEnabled() {
+		if installed {
+			return StateDrifted, nil
+		}
+		return StateDisabled, nil
+	}
+	if !installed {
+		return StateUnapplied, nil
+	}
+	plist, err := renderJob(job, self, base)
+	if err != nil {
+		return "", err
+	}
+	if plistUnchanged(job.Name, plist) && isLoaded(job.Name) {
+		return StateApplied, nil
+	}
+	return StateDrifted, nil
+}
+
 func renderJob(job config.Job, self string, base map[string]string) (string, error) {
 	intervals, err := schedule.ToLaunchd(job.Schedule)
 	if err != nil {

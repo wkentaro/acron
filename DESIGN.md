@@ -32,6 +32,9 @@ Windows is out of scope.
 - **Run**: one execution of a Job's agent, ending in a status: `success`,
   `failure`, `timeout`, or `skipped`.
 - **Apply**: reconcile OS units to the Config (create + update + prune).
+- **Apply state**: a Job's relationship to the installed units —
+  `applied` / `drifted` / `unapplied` / `orphaned` / `disabled` (what `status`
+  reports).
 - **Destroy**: remove all acron-owned units from this machine, keep the Config.
 
 ## Config
@@ -106,8 +109,7 @@ atomically (no partial apply) on:
 | `acron apply [--dry-run]`                | Reconcile OS units to the Config.                                  |
 | `acron destroy`                          | Remove all acron-owned units from this machine; keep the Config.   |
 | `acron run <job>`                        | The entry the scheduler invokes; also runs a Job now, for testing. |
-| `acron list`                             | List Jobs from the Config (name, schedule, next fire, enabled).    |
-| `acron status`                           | Table of each Job's last Run status and time (reads Run history).  |
+| `acron status`                           | Table of each Job's Apply state and latest Run status (ADR-0011).  |
 | `acron logs <job> [--run <ts>] [--list]` | Show a Run's captured output.                                      |
 | `acron edit`                             | Open the Config in `$EDITOR`, validate on save.                    |
 
@@ -133,6 +135,22 @@ plan without applying it. Pruning is automatic (ADR-0008).
 Removes every acron-owned unit on the current machine and leaves the Config
 intact, so a later `apply` reinstalls them. Useful for decommissioning one
 machine while keeping the Config in dotfiles.
+
+### status
+
+A table with two independent axes per Job (ADR-0011):
+
+- **Apply state** — `applied` / `drifted` / `unapplied` / `orphaned` /
+  `disabled`, computed from the same comparison `apply` performs: a Job is
+  `applied` exactly when `apply` would be a no-op for it (unit files match _and_
+  the timer is loaded and active). This queries `systemctl --user` / `launchctl`
+  for liveness, so it is not offline-pure. Rows are the union of Config Jobs and
+  acron-owned installed units, so an `orphaned` unit (still installed, no longer
+  in the Config) shows up even though it has no Config entry. A Job with
+  `enabled = false` reads as `disabled` (or `drifted` if its units linger from
+  before it was disabled).
+- **Run status** — the latest Run's outcome and time, read from the last record
+  in `runs/<job>/history.jsonl`.
 
 ## Runtime: `acron run <job>`
 
@@ -174,8 +192,8 @@ One JSON object per line in `runs/<job>/history.jsonl`:
 
 A `skipped` record carries a `reason` (`overlap` or `condition`) and no `log`;
 condition failures carry `reason: condition` with `status: failure` and a log.
-`acron status` reads the last record per Job; `acron logs` reads the records to
-resolve `--run` and `--list`.
+`acron status` reads the last record per Job for its Run-status column; `acron
+logs` reads the records to resolve `--run` and `--list`.
 
 ## Environment
 

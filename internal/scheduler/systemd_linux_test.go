@@ -5,6 +5,7 @@ package scheduler
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -100,6 +101,73 @@ func TestOwnedJobs(t *testing.T) {
 	got := strings.Join(jobs, ",")
 	if got != "alpha,beta" {
 		t.Errorf("ownedJobs = %q, want \"alpha,beta\"", got)
+	}
+}
+
+func TestApplyStates(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := os.MkdirAll(paths.SystemdUserDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	disabled := false
+	job := func(name string, enabled *bool) config.Job {
+		return config.Job{
+			Name: name, Schedule: "0 2 * * *", Agent: []string{"true"},
+			Prompt: "x", Cwd: "/tmp", Enabled: enabled,
+		}
+	}
+	// A test-only name so the live-units case never collides with a real
+	// acron-*.timer that systemctl might report active on a developer machine.
+	live := job("applystate-test-live", nil)
+	cfg := &config.Config{Jobs: []config.Job{
+		job("pending", nil),
+		job("off", &disabled),
+		job("off-lingering", &disabled),
+		live,
+	}}
+
+	// live gets current, matching units but no timer is ever loaded, so isActive
+	// is false and its state is drifted rather than applied. off-lingering and
+	// ghost get stale units; ghost is not in the Config.
+	self, err := paths.Self()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := snapshotEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, timer, err := renderJob(live, self, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeUnitsOrFail := func(name, svc, tmr string) {
+		t.Helper()
+		if err := os.WriteFile(paths.ServicePath(name), []byte(svc), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(paths.TimerPath(name), []byte(tmr), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeUnitsOrFail("applystate-test-live", service, timer)
+	writeUnitsOrFail("off-lingering", "svc", "tmr")
+	writeUnitsOrFail("ghost", "svc", "tmr")
+
+	states, err := ApplyStates(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []JobState{
+		{Name: "pending", State: StateUnapplied},
+		{Name: "off", State: StateDisabled},
+		{Name: "off-lingering", State: StateDrifted},
+		{Name: "applystate-test-live", State: StateDrifted}, // units match, but the timer is not loaded
+		{Name: "ghost", State: StateOrphaned},
+	}
+	if !reflect.DeepEqual(states, want) {
+		t.Errorf("ApplyStates = %+v\nwant %+v", states, want)
 	}
 }
 

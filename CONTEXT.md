@@ -32,6 +32,10 @@ _Avoid_: Manifest, jobfile, crontab
 The reconcile operation (`acron apply`) that makes the OS scheduler units match the Config: creating, updating, and removing units so they agree with the declared Jobs. Auto-prunes acron-owned units no longer in the Config.
 _Avoid_: Sync, install, reload
 
+**Apply state**:
+A Job's state relative to `apply`, comparing the Config against the acron-owned units installed on this machine. One of: `applied` (the units match the Config and the timer is loaded and active, so running `apply` would be a no-op), `drifted` (running `apply` would rewrite or restart the units — the Config, the apply-time environment snapshot, or the timer's active state no longer matches what is installed), `unapplied` (declared in the Config but not yet installed), `orphaned` (units still installed for a Job no longer in the Config), or `disabled` (the Job sets `enabled = false`, so `apply` keeps it uninstalled — lingering units from before it was disabled read as `drifted`, since `apply` would remove them). What `acron status` reports for each Job alongside its latest Run status; computed from the same comparison `apply` performs, so a Job is `applied` exactly when `apply` is a no-op for it.
+_Avoid_: Sync, sync status, reconciliation state, install status, drift (as the umbrella term; it names one state)
+
 **Destroy**:
 The teardown operation (`acron destroy`) that removes all acron-owned units from the current machine while leaving the Config intact, so a later `apply` reinstalls them.
 _Avoid_: Uninstall, purge, clean

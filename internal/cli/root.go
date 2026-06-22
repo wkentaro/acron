@@ -29,6 +29,7 @@ acron apply                 # Reconcile units to the config
 acron run nightly-triage    # Run a job now
 acron status                # Show apply state and last run per job
 acron logs nightly-triage   # Show a job's latest run
+acron history nightly-triage # List a job's past runs
 acron destroy               # Remove all acron units (keep config)
 `,
 	}
@@ -43,6 +44,7 @@ acron destroy               # Remove all acron units (keep config)
 		newRunCmd(),
 		newStatusCmd(),
 		newLogsCmd(),
+		newHistoryCmd(),
 		newEditCmd(),
 	)
 

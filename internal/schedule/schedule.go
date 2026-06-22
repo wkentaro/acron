@@ -62,34 +62,51 @@ func parse(expr string) (fields, error) {
 		return fields{}, fmt.Errorf("schedule %q: expected 5 cron fields, got %d", expr, len(cronFields))
 	}
 
+	// monthNames and weekdayNames mirror the case-insensitive aliases the robfig
+	// parser accepts for the month and day-of-week fields, so any schedule that
+	// Config.Validate accepts also translates here.
+	monthNames := map[string]int{
+		"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+		"jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+	}
+	weekdayNames := map[string]int{
+		"sun": 0, "mon": 1, "tue": 2, "wed": 3, "thu": 4, "fri": 5, "sat": 6,
+	}
+
 	var f fields
 	specs := []struct {
 		name     string
 		field    string
 		dst      *[]int
 		min, max int
+		names    map[string]int
 	}{
-		{"minute", cronFields[0], &f.minute, 0, 59},
-		{"hour", cronFields[1], &f.hour, 0, 23},
-		{"day-of-month", cronFields[2], &f.day, 1, 31},
-		{"month", cronFields[3], &f.month, 1, 12},
-		{"day-of-week", cronFields[4], &f.weekday, 0, 6},
+		{"minute", cronFields[0], &f.minute, 0, 59, nil},
+		{"hour", cronFields[1], &f.hour, 0, 23, nil},
+		{"day-of-month", cronFields[2], &f.day, 1, 31, nil},
+		{"month", cronFields[3], &f.month, 1, 12, monthNames},
+		{"day-of-week", cronFields[4], &f.weekday, 0, 6, weekdayNames},
 	}
 	for _, spec := range specs {
-		values, err := parseField(spec.field, spec.min, spec.max)
+		values, err := parseField(spec.field, spec.min, spec.max, spec.names)
 		if err != nil {
 			return fields{}, fmt.Errorf("schedule %q: %s: %w", expr, spec.name, err)
 		}
 		*spec.dst = values
 	}
 	// POSIX cron ORs day-of-month and day-of-week when both are restricted. A
-	// field starting with "*" (e.g. "*/2") is unrestricted here even though it
-	// parses to a populated slice, so the check reads the raw field rather than
-	// f.day/f.weekday.
-	domRestricted := !strings.HasPrefix(cronFields[2], "*")
-	dowRestricted := !strings.HasPrefix(cronFields[4], "*")
-	f.domDowOr = domRestricted && dowRestricted
+	// field starting with "*" (e.g. "*/2") or a "?" (the robfig alias for "*")
+	// is unrestricted here even though it may parse to a populated slice, so the
+	// check reads the raw field rather than f.day/f.weekday.
+	f.domDowOr = isRestricted(cronFields[2]) && isRestricted(cronFields[4])
 	return f, nil
+}
+
+// isRestricted reports whether a day field narrows the schedule. A field opening
+// with "*" or "?" matches every value (robfig sets its star bit), so it does
+// not restrict; anything else does.
+func isRestricted(field string) bool {
+	return !strings.HasPrefix(field, "*") && !strings.HasPrefix(field, "?")
 }
 
 // domDowArm is one (day, weekday) pair to expand into match points.
@@ -188,10 +205,10 @@ func (f fields) onCalendar() []string {
 func (f fields) onCalendarLine(day, weekday []int) string {
 	var b strings.Builder
 	if len(weekday) > 0 {
-		weekdayNames := [...]string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+		weekdayAbbrevs := [...]string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
 		names := make([]string, len(weekday))
 		for i, wd := range weekday {
-			names[i] = weekdayNames[wd]
+			names[i] = weekdayAbbrevs[wd]
 		}
 		b.WriteString(strings.Join(names, ","))
 		b.WriteByte(' ')
@@ -213,13 +230,15 @@ func calendarField(values []int) string {
 	return strings.Join(parts, ",")
 }
 
-func parseField(field string, min, max int) ([]int, error) {
-	if field == "*" {
+func parseField(field string, min, max int, names map[string]int) ([]int, error) {
+	// A field opening with "*" or "?" without a "/" step is unrestricted: robfig
+	// ignores any range high bound and treats the field as matching every value.
+	if !strings.ContainsRune(field, '/') && (strings.HasPrefix(field, "*") || strings.HasPrefix(field, "?")) {
 		return nil, nil
 	}
 	seen := map[int]bool{}
 	for _, term := range strings.Split(field, ",") {
-		values, err := parseTerm(term, min, max)
+		values, err := parseTerm(term, min, max, names)
 		if err != nil {
 			return nil, err
 		}
@@ -235,7 +254,7 @@ func parseField(field string, min, max int) ([]int, error) {
 	return out, nil
 }
 
-func parseTerm(term string, min, max int) ([]int, error) {
+func parseTerm(term string, min, max int, names map[string]int) ([]int, error) {
 	spec, step := term, 0
 	if slash := strings.IndexByte(term, '/'); slash >= 0 {
 		spec = term[:slash]
@@ -246,7 +265,7 @@ func parseTerm(term string, min, max int) ([]int, error) {
 		step = n
 	}
 
-	lo, hi, err := parseRange(spec, min, max, step > 0)
+	lo, hi, err := parseRange(spec, min, max, step > 0, names)
 	if err != nil {
 		return nil, err
 	}
@@ -263,16 +282,21 @@ func parseTerm(term string, min, max int) ([]int, error) {
 // parseRange resolves the value part of a term (before any "/step") into an
 // inclusive [lo, hi] bound. A bare number spans to max when a step follows
 // (`5/10` means 5,15,...); otherwise it is the single value `5`.
-func parseRange(spec string, min, max int, stepped bool) (lo, hi int, err error) {
+func parseRange(spec string, min, max int, stepped bool, names map[string]int) (lo, hi int, err error) {
 	switch {
-	case spec == "*":
+	case spec == "*" || spec == "?":
 		return min, max, nil
 	case strings.ContainsRune(spec, '-'):
 		bounds := strings.SplitN(spec, "-", 2)
-		if lo, err = boundedAtoi(bounds[0], min, max); err != nil {
+		// A "*" or "?" low bound means the whole range; robfig ignores the high
+		// bound entirely here, so neither restricts.
+		if bounds[0] == "*" || bounds[0] == "?" {
+			return min, max, nil
+		}
+		if lo, err = boundedAtoi(bounds[0], min, max, names); err != nil {
 			return 0, 0, err
 		}
-		if hi, err = boundedAtoi(bounds[1], min, max); err != nil {
+		if hi, err = boundedAtoi(bounds[1], min, max, names); err != nil {
 			return 0, 0, err
 		}
 		if lo > hi {
@@ -280,7 +304,7 @@ func parseRange(spec string, min, max int, stepped bool) (lo, hi int, err error)
 		}
 		return lo, hi, nil
 	default:
-		if lo, err = boundedAtoi(spec, min, max); err != nil {
+		if lo, err = boundedAtoi(spec, min, max, names); err != nil {
 			return 0, 0, err
 		}
 		if stepped {
@@ -290,10 +314,13 @@ func parseRange(spec string, min, max int, stepped bool) (lo, hi int, err error)
 	}
 }
 
-func boundedAtoi(s string, min, max int) (int, error) {
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return 0, fmt.Errorf("invalid value %q", s)
+func boundedAtoi(s string, min, max int, names map[string]int) (int, error) {
+	n, ok := names[strings.ToLower(s)]
+	if !ok {
+		var err error
+		if n, err = strconv.Atoi(s); err != nil {
+			return 0, fmt.Errorf("invalid value %q", s)
+		}
 	}
 	if n < min || n > max {
 		return 0, fmt.Errorf("value %d out of range [%d,%d]", n, min, max)

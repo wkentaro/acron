@@ -25,6 +25,11 @@ func TestToLaunchd(t *testing.T) {
 		{"30 14 1 6 *", CalendarInterval{Minute: ptr(30), Hour: ptr(14), Day: ptr(1), Month: ptr(6)}},
 		{"0 9 * * 1", CalendarInterval{Minute: ptr(0), Hour: ptr(9), Weekday: ptr(1)}},
 		{"* * * * *", CalendarInterval{}},
+		// Named month and weekday (any case) render to the same numbers as robfig.
+		{"30 14 1 JUN *", CalendarInterval{Minute: ptr(30), Hour: ptr(14), Day: ptr(1), Month: ptr(6)}},
+		{"0 9 * * Mon", CalendarInterval{Minute: ptr(0), Hour: ptr(9), Weekday: ptr(1)}},
+		// "?" is the robfig alias for "*", i.e. unrestricted.
+		{"0 9 ? * *", CalendarInterval{Minute: ptr(0), Hour: ptr(9)}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
@@ -138,6 +143,19 @@ func TestToSystemd(t *testing.T) {
 		// Multi-valued OR: each arm renders its own comma list, the day arm by
 		// day and the weekday arm by weekday.
 		{"0 9 1,15 * 1,3", []string{"*-*-01,15 09:00:00", "Mon,Wed *-*-* 09:00:00"}},
+		// Named months and weekdays (any case, including named ranges) render to
+		// the same numbers robfig assigns.
+		{"0 9 * * MON", []string{"Mon *-*-* 09:00:00"}},
+		{"0 9 * JAN *", []string{"*-01-* 09:00:00"}},
+		{"0 9 * * mon-fri", []string{"Mon,Tue,Wed,Thu,Fri *-*-* 09:00:00"}},
+		// "?" is the robfig alias for "*".
+		{"0 9 ? * *", []string{"*-*-* 09:00:00"}},
+		// DOM/DOW OR regression, numeric and named day-of-week alike.
+		{"0 0 13 * 5", []string{"*-*-13 00:00:00", "Fri *-*-* 00:00:00"}},
+		{"0 0 13 * FRI", []string{"*-*-13 00:00:00", "Fri *-*-* 00:00:00"}},
+		// "?-N" DOW is unrestricted (same as "*-N"), so no OR split.
+		{"0 0 13 * ?-5", []string{"*-*-13 00:00:00"}},
+		{"0 0 13 * *-5", []string{"*-*-13 00:00:00"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {

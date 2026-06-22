@@ -273,6 +273,60 @@ func releaseLock(file *os.File) {
 	_ = file.Close()
 }
 
+// IsRunning reports whether a Run currently holds the Job's lock. It is a
+// best-effort, non-destructive probe of the same flock acquireLock takes: a
+// successful try-lock (released at once) means no Run is in flight, EWOULDBLOCK
+// means one is. The result is advisory; a firing can still begin the instant
+// after it returns. It opens without O_CREATE so probing a Job that has never
+// run reports false rather than littering a lock file.
+func IsRunning(job string) bool {
+	file, err := os.OpenFile(paths.LockPath(job), os.O_RDWR, 0o644)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = file.Close() }()
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return err == syscall.EWOULDBLOCK
+	}
+	_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+	return false
+}
+
+// RunningSince reports whether a Run is in flight for the Job and, when known,
+// when it started. The start time is read from the in-flight Run's log file,
+// which has no history Record yet; it is unknown (zero) during an earlier
+// Condition check, before the agent's log exists.
+func RunningSince(job string) (time.Time, bool) {
+	if !IsRunning(job) {
+		return time.Time{}, false
+	}
+	recorded := map[string]bool{}
+	if records, err := History(job); err == nil {
+		for _, rec := range records {
+			recorded[rec.Log] = true
+		}
+	}
+	entries, err := os.ReadDir(paths.RunsDir(job))
+	if err != nil {
+		return time.Time{}, true
+	}
+	newest := ""
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasSuffix(name, ".log") && !recorded[name] && name > newest {
+			newest = name
+		}
+	}
+	if newest == "" {
+		return time.Time{}, true
+	}
+	start, err := time.Parse(timestampLayout, strings.TrimSuffix(newest, ".log"))
+	if err != nil {
+		return time.Time{}, true
+	}
+	return start, true
+}
+
 func substitutePrompt(agent []string, prompt string) []string {
 	argv := make([]string, 0, len(agent)+1)
 	replaced := false

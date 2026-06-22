@@ -21,3 +21,7 @@ func Destroy() (*Plan, error) {
 func ApplyStates(_ *config.Config) ([]JobState, error) {
 	return nil, errUnsupported
 }
+
+func Trigger(_ string) error {
+	return errUnsupported
+}

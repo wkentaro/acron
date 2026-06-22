@@ -104,7 +104,7 @@ func newLogsCmd() *cobra.Command {
 acron logs nightly-triage                       # Newest run (same as "latest")
 acron logs nightly-triage latest                # Newest run explicitly
 acron logs nightly-triage 3                     # The 3rd most recent run (see acron history)
-acron logs nightly-triage 2026-06-22T02-00-00   # A specific run by timestamp
+acron logs nightly-triage "2026-06-22 02:00:00" # A specific run by its displayed timestamp
 `,
 		RunE: func(_ *cobra.Command, args []string) error {
 			selector := ""
@@ -412,10 +412,7 @@ func renderJobHistory(jobName string, records []runner.Record, indexWidth int) s
 	rows := make([]row, 0, len(records))
 	for i := len(records) - 1; i >= 0; i-- {
 		rec := records[i]
-		label := strings.TrimSuffix(rec.Log, ".log")
-		if label == "" {
-			label = formatWhen(rec.Start)
-		}
+		label := formatWhen(rec.Start)
 		index := commentStyle.Render(fmt.Sprintf("%*d", indexWidth, len(records)-i))
 		rows = append(rows, row{
 			left:  index + "  " + argStyle.Render(label),
@@ -464,16 +461,34 @@ func logByIndex(job string, records []runner.Record, index int) (string, error) 
 }
 
 func logByTimestamp(job, timestamp string, records []runner.Record) (string, error) {
-	name := timestamp
-	if !strings.HasSuffix(name, ".log") {
-		name += ".log"
+	want, ok := parseSelectorTime(timestamp)
+	if !ok {
+		return "", fmt.Errorf("unrecognized timestamp %q for job %q (want %q)", timestamp, job, displayTimeFormat)
 	}
 	for _, rec := range records {
-		if rec.Log == name {
-			return rec.Log, nil
+		start, err := time.Parse(time.RFC3339, rec.Start)
+		if err != nil || !start.Equal(want) {
+			continue
 		}
+		if rec.Log == "" {
+			return "", fmt.Errorf("run at %q of job %q was skipped (%s); no output", timestamp, job, rec.Reason)
+		}
+		return rec.Log, nil
 	}
 	return "", fmt.Errorf("no run %q for job %q", timestamp, job)
+}
+
+// parseSelectorTime reads a timestamp selector in either the human-readable
+// form acron displays or the legacy log-filename form. Both are local
+// wall-clock, matching how runs are displayed and how log files are named.
+func parseSelectorTime(timestamp string) (time.Time, bool) {
+	timestamp = strings.TrimSuffix(timestamp, ".log")
+	for _, layout := range []string{displayTimeFormat, "2006-01-02T15-04-05"} {
+		if t, err := time.ParseInLocation(layout, timestamp, time.Local); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func runEdit() error {
@@ -630,7 +645,8 @@ func statusStyle(status runner.Status) lipgloss.Style {
 	}
 }
 
-const displayTimeFormat = "2006-01-02 15:04"
+// Second precision so the displayed timestamp round-trips as a logs selector.
+const displayTimeFormat = "2006-01-02 15:04:05"
 
 func formatWhen(ts string) string {
 	t, err := time.Parse(time.RFC3339, ts)

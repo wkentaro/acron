@@ -25,9 +25,8 @@ Roadmap for the work remaining after the macOS (launchd) runtime. See
 
 ### Schedule completeness
 
-- [ ] Support lists, ranges, and steps (`*/15`, `1,2,3`, `9-17`): enumerate into
+- [x] Support lists, ranges, and steps (`*/15`, `1,2,3`, `9-17`): enumerate into
       multiple launchd `StartCalendarInterval` dicts; map to `OnCalendar`.
-      Currently rejected with a clear error.
 
 ### Commands
 

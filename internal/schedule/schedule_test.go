@@ -11,6 +11,11 @@ func eq(a, b *int) bool {
 	return *a == *b
 }
 
+func eqInterval(a, b CalendarInterval) bool {
+	return eq(a.Minute, b.Minute) && eq(a.Hour, b.Hour) && eq(a.Day, b.Day) &&
+		eq(a.Weekday, b.Weekday) && eq(a.Month, b.Month)
+}
+
 func TestToLaunchd(t *testing.T) {
 	tests := []struct {
 		expr string
@@ -30,13 +35,63 @@ func TestToLaunchd(t *testing.T) {
 			if len(got) != 1 {
 				t.Fatalf("expected 1 interval, got %d", len(got))
 			}
-			ci := got[0]
-			if !eq(ci.Minute, tt.want.Minute) || !eq(ci.Hour, tt.want.Hour) ||
-				!eq(ci.Day, tt.want.Day) || !eq(ci.Weekday, tt.want.Weekday) ||
-				!eq(ci.Month, tt.want.Month) {
-				t.Errorf("ToLaunchd(%q) = %+v, want %+v", tt.expr, ci, tt.want)
+			if !eqInterval(got[0], tt.want) {
+				t.Errorf("ToLaunchd(%q) = %+v, want %+v", tt.expr, got[0], tt.want)
 			}
 		})
+	}
+}
+
+func TestToLaunchdExpands(t *testing.T) {
+	tests := []struct {
+		expr string
+		want []CalendarInterval
+	}{
+		{"*/15 * * * *", []CalendarInterval{
+			{Minute: ptr(0)}, {Minute: ptr(15)}, {Minute: ptr(30)}, {Minute: ptr(45)},
+		}},
+		{"0 0,12 * * *", []CalendarInterval{
+			{Minute: ptr(0), Hour: ptr(0)}, {Minute: ptr(0), Hour: ptr(12)},
+		}},
+		{"0 9 * * 1-5", []CalendarInterval{
+			{Minute: ptr(0), Hour: ptr(9), Weekday: ptr(1)},
+			{Minute: ptr(0), Hour: ptr(9), Weekday: ptr(2)},
+			{Minute: ptr(0), Hour: ptr(9), Weekday: ptr(3)},
+			{Minute: ptr(0), Hour: ptr(9), Weekday: ptr(4)},
+			{Minute: ptr(0), Hour: ptr(9), Weekday: ptr(5)},
+		}},
+		{"0,30 9-10 * * *", []CalendarInterval{
+			{Minute: ptr(0), Hour: ptr(9)},
+			{Minute: ptr(30), Hour: ptr(9)},
+			{Minute: ptr(0), Hour: ptr(10)},
+			{Minute: ptr(30), Hour: ptr(10)},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.expr, func(t *testing.T) {
+			got, err := ToLaunchd(tt.expr)
+			if err != nil {
+				t.Fatalf("ToLaunchd(%q): %v", tt.expr, err)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("ToLaunchd(%q): got %d intervals, want %d", tt.expr, len(got), len(tt.want))
+			}
+			for i := range got {
+				if !eqInterval(got[i], tt.want[i]) {
+					t.Errorf("ToLaunchd(%q)[%d] = %+v, want %+v", tt.expr, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestToLaunchdRejectsExplosion(t *testing.T) {
+	expr := "*/1 */1 */1 */1 */1" // expands past maxLaunchdIntervals
+	if _, err := ToLaunchd(expr); err == nil {
+		t.Errorf("ToLaunchd(%q): expected error for oversized expansion, got nil", expr)
+	}
+	if _, err := ToSystemd(expr); err != nil {
+		t.Errorf("ToSystemd(%q): renders comma lists without enumerating, want no error, got %v", expr, err)
 	}
 }
 
@@ -51,6 +106,10 @@ func TestToSystemd(t *testing.T) {
 		{"0 0 * * 0", "Sun *-*-* 00:00:00"},
 		{"* * * * *", "*-*-* *:*:00"},
 		{"* 2 * * *", "*-*-* 02:*:00"},
+		{"*/15 * * * *", "*-*-* *:00,15,30,45:00"},
+		{"0 0,12 * * *", "*-*-* 00,12:00:00"},
+		{"0 9 * * 1-5", "Mon,Tue,Wed,Thu,Fri *-*-* 09:00:00"},
+		{"0 9-12 * * *", "*-*-* 09,10,11,12:00:00"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
@@ -66,15 +125,7 @@ func TestToSystemd(t *testing.T) {
 }
 
 func TestToSystemdRejects(t *testing.T) {
-	tests := []string{
-		"0 2 * *",      // too few fields
-		"*/15 * * * *", // step
-		"0 9 * * 1-5",  // range
-		"0 0,12 * * *", // list
-		"99 2 * * *",   // out of range
-		"x 2 * * *",    // not a number
-	}
-	for _, expr := range tests {
+	for _, expr := range rejectCases() {
 		t.Run(expr, func(t *testing.T) {
 			if _, err := ToSystemd(expr); err == nil {
 				t.Errorf("ToSystemd(%q): expected error, got nil", expr)
@@ -84,19 +135,22 @@ func TestToSystemdRejects(t *testing.T) {
 }
 
 func TestToLaunchdRejects(t *testing.T) {
-	tests := []string{
-		"0 2 * *",      // too few fields
-		"*/15 * * * *", // step
-		"0 9 * * 1-5",  // range
-		"0 0,12 * * *", // list
-		"99 2 * * *",   // out of range
-		"x 2 * * *",    // not a number
-	}
-	for _, expr := range tests {
+	for _, expr := range rejectCases() {
 		t.Run(expr, func(t *testing.T) {
 			if _, err := ToLaunchd(expr); err == nil {
 				t.Errorf("ToLaunchd(%q): expected error, got nil", expr)
 			}
 		})
+	}
+}
+
+func rejectCases() []string {
+	return []string{
+		"0 2 * *",       // too few fields
+		"99 2 * * *",    // out of range
+		"x 2 * * *",     // not a number
+		"*/0 * * * *",   // zero step
+		"17-9 * * * *",  // descending range
+		"60-70 2 * * *", // range out of bounds
 	}
 }

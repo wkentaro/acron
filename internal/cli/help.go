@@ -35,12 +35,15 @@ func renderHelp(cmd *cobra.Command) string {
 	fmt.Fprintf(&b, "%s %s\n", headerStyle.Render("Usage:"), usageLine(cmd))
 
 	if cmds := visibleCommands(cmd); len(cmds) > 0 {
+		b.WriteString("\n")
 		section(&b, "Commands:", commandRows(cmds))
 	}
 	if opts := optionRows(cmd); len(opts) > 0 {
+		b.WriteString("\n")
 		section(&b, "Options:", opts)
 	}
 	if ex := exampleRows(cmd.Example); len(ex) > 0 {
+		b.WriteString("\n")
 		section(&b, "Examples:", ex)
 	}
 	return b.String()
@@ -122,7 +125,7 @@ func exampleRows(example string) []row {
 }
 
 func section(b *strings.Builder, header string, rows []row) {
-	b.WriteString("\n" + headerStyle.Render(header) + "\n")
+	b.WriteString(headerStyle.Render(header) + "\n")
 	width := 0
 	for _, r := range rows {
 		if w := lipgloss.Width(r.left); w > width {

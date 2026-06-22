@@ -27,7 +27,7 @@ func TestRenderService(t *testing.T) {
 	for _, want := range []string{
 		"[Service]",
 		"Type=oneshot",
-		"ExecStart=/usr/local/bin/acron run nightly-triage",
+		`ExecStart="/usr/local/bin/acron" run nightly-triage`,
 		"WorkingDirectory=/tmp/repo",
 		"StandardOutput=null",
 		"StandardError=null",
@@ -37,6 +37,56 @@ func TestRenderService(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("service missing %q\n---\n%s", want, out)
 		}
+	}
+}
+
+func TestRenderServiceEscaping(t *testing.T) {
+	tests := []struct {
+		name string
+		job  config.Job
+		self string
+		env  map[string]string
+		want string
+	}{
+		{
+			name: "percent in cwd is doubled",
+			job:  config.Job{Name: "j", Cwd: "/home/user/50%_off"},
+			self: "/usr/local/bin/acron",
+			want: "WorkingDirectory=/home/user/50%%_off\n",
+		},
+		{
+			name: "percent in env key is doubled",
+			job:  config.Job{Name: "j", Cwd: "/tmp"},
+			self: "/usr/local/bin/acron",
+			env:  map[string]string{"PCT%KEY": "v"},
+			want: `Environment="PCT%%KEY=v"` + "\n",
+		},
+		{
+			name: "space in executable path stays one argument",
+			job:  config.Job{Name: "j", Cwd: "/tmp"},
+			self: "/opt/my apps/acron",
+			want: `ExecStart="/opt/my apps/acron" run j` + "\n",
+		},
+		{
+			name: "percent in executable path is doubled",
+			job:  config.Job{Name: "j", Cwd: "/tmp"},
+			self: "/opt/50%off/acron",
+			want: `ExecStart="/opt/50%%off/acron" run j` + "\n",
+		},
+		{
+			name: "backslash and quote in cwd are left literal",
+			job:  config.Job{Name: "j", Cwd: `/home/a\b"c`},
+			self: "/usr/local/bin/acron",
+			want: `WorkingDirectory=/home/a\b"c` + "\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := renderService(tt.job, tt.self, tt.env)
+			if !strings.Contains(out, tt.want) {
+				t.Errorf("service missing %q\n---\n%s", tt.want, out)
+			}
+		})
 	}
 }
 

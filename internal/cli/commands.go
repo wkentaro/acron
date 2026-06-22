@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -83,19 +84,35 @@ func newStatusCmd() *cobra.Command {
 }
 
 func newLogsCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "logs <job>",
+	return &cobra.Command{
+		Use:   "logs <job> [run]",
 		Short: "Show a job's captured output",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			run, _ := cmd.Flags().GetString("run")
-			list, _ := cmd.Flags().GetBool("list")
-			return runLogs(args[0], run, list)
+		Args:  cobra.RangeArgs(1, 2),
+		Example: `
+acron logs nightly-triage                       # Newest run (same as "latest")
+acron logs nightly-triage latest                # Newest run explicitly
+acron logs nightly-triage 3                     # The 3rd most recent run (see acron history)
+acron logs nightly-triage 2026-06-22T02-00-00   # A specific run by timestamp
+`,
+		RunE: func(_ *cobra.Command, args []string) error {
+			selector := ""
+			if len(args) == 2 {
+				selector = args[1]
+			}
+			return runLogs(args[0], selector)
 		},
 	}
-	cmd.Flags().String("run", "", "Show a specific run by timestamp")
-	cmd.Flags().Bool("list", false, "List runs instead of showing output")
-	return cmd
+}
+
+func newHistoryCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "history <job>",
+		Short: "List a job's past runs",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runHistory(args[0])
+		},
+	}
 }
 
 func newEditCmd() *cobra.Command {
@@ -211,11 +228,8 @@ func renderLastRun(job string) (string, error) {
 	return renderStatus(rec.Status, rec.Reason) + "  " + commentStyle.Render(formatWhen(rec.Start)), nil
 }
 
-func runLogs(job, run string, list bool) error {
-	if list {
-		return listRuns(job)
-	}
-	name, err := resolveLog(job, run)
+func runLogs(job, selector string) error {
+	name, err := resolveLog(job, selector)
 	if err != nil {
 		return err
 	}
@@ -228,7 +242,7 @@ func runLogs(job, run string, list bool) error {
 	return err
 }
 
-func listRuns(job string) error {
+func runHistory(job string) error {
 	records, err := runner.History(job)
 	if err != nil {
 		return err
@@ -236,6 +250,7 @@ func listRuns(job string) error {
 	if len(records) == 0 {
 		return fmt.Errorf("no runs for job %q", job)
 	}
+	indexWidth := len(strconv.Itoa(len(records)))
 	rows := make([]row, 0, len(records))
 	for i := len(records) - 1; i >= 0; i-- {
 		rec := records[i]
@@ -243,8 +258,9 @@ func listRuns(job string) error {
 		if label == "" {
 			label = formatWhen(rec.Start)
 		}
+		index := commentStyle.Render(fmt.Sprintf("%*d", indexWidth, len(records)-i))
 		rows = append(rows, row{
-			left:  argStyle.Render(label),
+			left:  index + "  " + argStyle.Render(label),
 			right: renderStatus(rec.Status, rec.Reason),
 		})
 	}
@@ -254,35 +270,54 @@ func listRuns(job string) error {
 	return nil
 }
 
-func resolveLog(job, run string) (string, error) {
-	if run != "" {
-		name := run
-		if !strings.HasSuffix(name, ".log") {
-			name += ".log"
-		}
-		if _, err := os.Stat(filepath.Join(paths.RunsDir(job), name)); err != nil {
-			return "", fmt.Errorf("no run %q for job %q", run, job)
-		}
-		return name, nil
+func resolveLog(job, selector string) (string, error) {
+	records, err := runner.History(job)
+	if err != nil {
+		return "", err
 	}
-	return newestLog(job)
+	if len(records) == 0 {
+		return "", fmt.Errorf("no runs for job %q", job)
+	}
+	if selector == "" || selector == "latest" {
+		return latestLog(job, records)
+	}
+	if index, err := strconv.Atoi(selector); err == nil {
+		return logByIndex(job, records, index)
+	}
+	return logByTimestamp(job, selector, records)
 }
 
-func newestLog(job string) (string, error) {
-	entries, err := os.ReadDir(paths.RunsDir(job))
-	if err != nil {
-		return "", fmt.Errorf("no runs for job %q", job)
-	}
-	newest := ""
-	for _, entry := range entries {
-		if name := entry.Name(); strings.HasSuffix(name, ".log") && name > newest {
-			newest = name
+func latestLog(job string, records []runner.Record) (string, error) {
+	for i := len(records) - 1; i >= 0; i-- {
+		if records[i].Log != "" {
+			return records[i].Log, nil
 		}
 	}
-	if newest == "" {
-		return "", fmt.Errorf("no runs for job %q", job)
+	return "", fmt.Errorf("no captured output for job %q", job)
+}
+
+func logByIndex(job string, records []runner.Record, index int) (string, error) {
+	if index < 1 || index > len(records) {
+		return "", fmt.Errorf("no run %d for job %q (have %d)", index, job, len(records))
 	}
-	return newest, nil
+	rec := records[len(records)-index]
+	if rec.Log == "" {
+		return "", fmt.Errorf("run %d of job %q was skipped (%s); no output", index, job, rec.Reason)
+	}
+	return rec.Log, nil
+}
+
+func logByTimestamp(job, timestamp string, records []runner.Record) (string, error) {
+	name := timestamp
+	if !strings.HasSuffix(name, ".log") {
+		name += ".log"
+	}
+	for _, rec := range records {
+		if rec.Log == name {
+			return rec.Log, nil
+		}
+	}
+	return "", fmt.Errorf("no run %q for job %q", timestamp, job)
 }
 
 func runEdit() error {

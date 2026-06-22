@@ -17,7 +17,7 @@ An optional user-supplied command run at fire time, before the agent, whose outc
 _Avoid_: Gate, guard, predicate, when, unless
 
 **Run history**:
-The append-only record of a Job's past Runs (start, end, exit code, status, duration, log path), kept as `history.jsonl` alongside the per-Run log files. What `acron status` and `acron logs` read.
+The append-only record of a Job's past Runs (start, end, exit code, status, duration, log path), kept as `history.jsonl` alongside the per-Run log files. What `acron status`, `acron history`, and `acron logs` read.
 _Avoid_: Audit log, journal
 
 **Job**:

@@ -104,14 +104,15 @@ atomically (no partial apply) on:
 
 ## CLI
 
-| Command                                  | Purpose                                                            |
-| ---------------------------------------- | ------------------------------------------------------------------ |
-| `acron apply [--dry-run]`                | Reconcile OS units to the Config.                                  |
-| `acron destroy`                          | Remove all acron-owned units from this machine; keep the Config.   |
-| `acron run <job>`                        | The entry the scheduler invokes; also runs a Job now, for testing. |
-| `acron status`                           | Table of each Job's Apply state and latest Run status (ADR-0011).  |
-| `acron logs <job> [--run <ts>] [--list]` | Show a Run's captured output.                                      |
-| `acron edit`                             | Open the Config in `$EDITOR`, validate on save.                    |
+| Command                   | Purpose                                                            |
+| ------------------------- | ------------------------------------------------------------------ |
+| `acron apply [--dry-run]` | Reconcile OS units to the Config.                                  |
+| `acron destroy`           | Remove all acron-owned units from this machine; keep the Config.   |
+| `acron run <job>`         | The entry the scheduler invokes; also runs a Job now, for testing. |
+| `acron status`            | Table of each Job's Apply state and latest Run status (ADR-0011).  |
+| `acron logs <job> [run]`  | Show a Run's captured output (newest, or by index or timestamp).   |
+| `acron history <job>`     | List a Job's past Runs (index, time, status).                      |
+| `acron edit`              | Open the Config in `$EDITOR`, validate on save.                    |
 
 Verb choice follows the on-demand declarative-reconcile idiom (`apply`/`destroy`
 from Terraform; `apply` also matches chezmoi). `install`/`uninstall`/`sync` were
@@ -193,7 +194,9 @@ One JSON object per line in `runs/<job>/history.jsonl`:
 A `skipped` record carries a `reason` (`overlap` or `condition`) and no `log`;
 condition failures carry `reason: condition` with `status: failure` and a log.
 `acron status` reads the last record per Job for its Run-status column; `acron
-logs` reads the records to resolve `--run` and `--list`.
+history` lists a Job's records, and `acron logs` reads them to resolve the
+requested Run (newest by default, or the Nth most recent by index, or an exact
+timestamp).
 
 ## Environment
 

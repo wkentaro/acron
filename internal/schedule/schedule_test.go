@@ -144,6 +144,22 @@ func TestToLaunchdRejects(t *testing.T) {
 	}
 }
 
+// A "*"-prefixed field (e.g. "*/2") is unrestricted for the POSIX OR rule, so
+// pairing one with a restricted partner is AND, not the unsupported OR; both
+// directions must still be accepted by both backends.
+func TestStarPrefixedDayWithWeekdayAccepted(t *testing.T) {
+	for _, expr := range []string{"0 9 */2 * 1", "0 9 15 * */2"} {
+		t.Run(expr, func(t *testing.T) {
+			if _, err := ToLaunchd(expr); err != nil {
+				t.Errorf("ToLaunchd(%q): unexpected error: %v", expr, err)
+			}
+			if _, err := ToSystemd(expr); err != nil {
+				t.Errorf("ToSystemd(%q): unexpected error: %v", expr, err)
+			}
+		})
+	}
+}
+
 func rejectCases() []string {
 	return []string{
 		"0 2 * *",       // too few fields
@@ -152,5 +168,6 @@ func rejectCases() []string {
 		"*/0 * * * *",   // zero step
 		"17-9 * * * *",  // descending range
 		"60-70 2 * * *", // range out of bounds
+		"0 9 15 * 1",    // both day-of-month and day-of-week set (POSIX OR, unsupported)
 	}
 }

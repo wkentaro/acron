@@ -75,6 +75,15 @@ func parse(expr string) (fields, error) {
 		}
 		*spec.dst = values
 	}
+	// POSIX cron ORs day-of-month and day-of-week when both are restricted,
+	// which neither backend can represent. A field starting with "*" (e.g.
+	// "*/2") is unrestricted here even though it parses to a populated slice,
+	// so the check reads the raw field rather than f.day/f.weekday.
+	domRestricted := !strings.HasPrefix(cronFields[2], "*")
+	dowRestricted := !strings.HasPrefix(cronFields[4], "*")
+	if domRestricted && dowRestricted {
+		return fields{}, fmt.Errorf("schedule %q: combined day-of-month and day-of-week (POSIX OR) is not supported yet", expr)
+	}
 	return f, nil
 }
 

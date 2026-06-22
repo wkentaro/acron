@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -50,11 +51,37 @@ func TestRunHistoryNumbersNewestFirst(t *testing.T) {
 		t.Errorf("first line = %q, want job header", lines[0])
 	}
 	body := lines[len(lines)-3:]
-	if got := strings.Fields(body[0]); got[0] != "1" || got[1] != "2026-06-22T02-00-00" {
+	if got := strings.Fields(body[0]); got[0] != "1" || !strings.Contains(body[0], "2026-06-22 02:00:00") {
 		t.Errorf("first run row = %q", body[0])
 	}
-	if got := strings.Fields(body[2]); got[0] != "3" || got[1] != "2026-06-22T00-00-00" {
+	if got := strings.Fields(body[2]); got[0] != "3" || !strings.Contains(body[2], "2026-06-22 00:00:00") {
 		t.Errorf("last run row = %q", body[2])
+	}
+}
+
+func TestRunHistoryFormatsCapturedAndSkippedUniformly(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	seedConfig(t, "job")
+	seedRuns(t, "job", []runner.Record{
+		{Start: "2026-06-22T00:00:00Z", Status: runner.StatusSuccess, Log: "2026-06-22T00-00-00.log"},
+		{Start: "2026-06-22T01:30:45Z", Status: runner.StatusSkipped, Reason: runner.ReasonOverlap},
+	})
+
+	out, err := captureStdout(t, func() error { return runHistory("job") })
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	human := regexp.MustCompile(`\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}`)
+	filename := regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}`)
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	for _, row := range lines[len(lines)-2:] {
+		if !human.MatchString(row) {
+			t.Errorf("row missing human timestamp: %q", row)
+		}
+		if filename.MatchString(row) {
+			t.Errorf("row leaks filename timestamp layout: %q", row)
+		}
 	}
 }
 

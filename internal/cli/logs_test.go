@@ -7,10 +7,20 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wkentaro/acron/internal/paths"
 	"github.com/wkentaro/acron/internal/runner"
 )
+
+// Pin the whole cli test binary to UTC. Display and selector parsing both go
+// through time.Local; without a fixed zone the UTC record starts and the
+// local-wall-clock selectors would diverge by the host offset, making the
+// display and round-trip assertions host-dependent.
+func TestMain(m *testing.M) {
+	time.Local = time.UTC
+	os.Exit(m.Run())
+}
 
 func seedRuns(t *testing.T, job string, records []runner.Record) {
 	t.Helper()
@@ -156,12 +166,26 @@ func TestResolveLogByTimestamp(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	seedRuns(t, "job", makeThreeRuns())
 
-	name, err := resolveLog("job", "2026-06-22T01-00-00")
-	if err != nil {
-		t.Fatal(err)
+	for _, selector := range []string{"2026-06-22T01-00-00", "2026-06-22 01:00:00"} {
+		name, err := resolveLog("job", selector)
+		if err != nil {
+			t.Fatalf("selector %q: %v", selector, err)
+		}
+		if name != "2026-06-22T01-00-00.log" {
+			t.Errorf("selector %q: got %q", selector, name)
+		}
 	}
-	if name != "2026-06-22T01-00-00.log" {
-		t.Errorf("got %q", name)
+}
+
+func TestResolveLogByTimestampSkippedRunHasNoOutput(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	seedRuns(t, "job", []runner.Record{
+		{Start: "2026-06-22T00:00:00Z", Status: runner.StatusSkipped, Reason: runner.ReasonOverlap},
+	})
+
+	_, err := resolveLog("job", "2026-06-22 00:00:00")
+	if err == nil || !strings.Contains(err.Error(), "skipped") {
+		t.Fatalf("got %v", err)
 	}
 }
 

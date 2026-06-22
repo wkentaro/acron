@@ -165,22 +165,20 @@ func runJob(name string) error {
 	if err != nil {
 		return err
 	}
-	for _, job := range cfg.Jobs {
-		if job.Name != name {
-			continue
-		}
-		result, err := runner.Run(job)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("%s  %s  exit %d  %s\n",
-			renderStatus(result.Status, result.Reason), name, result.Exit, result.Duration.Round(time.Second))
-		if result.LogPath != "" {
-			fmt.Println(commentStyle.Render(result.LogPath))
-		}
-		return nil
+	job, ok := cfg.FindJob(name)
+	if !ok {
+		return fmt.Errorf("no job named %q", name)
 	}
-	return fmt.Errorf("no job named %q", name)
+	result, err := runner.Run(job)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s  %s  exit %d  %s\n",
+		renderStatus(result.Status, result.Reason), name, result.Exit, result.Duration.Round(time.Second))
+	if result.LogPath != "" {
+		fmt.Println(commentStyle.Render(result.LogPath))
+	}
+	return nil
 }
 
 func runTrigger(name string) error {

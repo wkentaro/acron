@@ -26,7 +26,8 @@ func newRootCmd() *cobra.Command {
 		SilenceErrors: true,
 		Example: `
 acron apply                 # Reconcile units to the config
-acron run nightly-triage    # Run a job now
+acron run nightly-triage    # Run a job now in the foreground
+acron trigger nightly-triage # Fire a job now in the background
 acron status                # Show apply state and last run per job
 acron logs nightly-triage   # Show a job's latest run
 acron history nightly-triage # List a job's past runs
@@ -42,6 +43,7 @@ acron destroy               # Remove all acron units (keep config)
 		newApplyCmd(),
 		newDestroyCmd(),
 		newRunCmd(),
+		newTriggerCmd(),
 		newStatusCmd(),
 		newLogsCmd(),
 		newHistoryCmd(),

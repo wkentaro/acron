@@ -73,6 +73,17 @@ func newRunCmd() *cobra.Command {
 	}
 }
 
+func newTriggerCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "trigger <job>",
+		Short: "Fire a job now, out of schedule, in the background",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runTrigger(args[0])
+		},
+	}
+}
+
 func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
@@ -172,6 +183,51 @@ func runJob(name string) error {
 	return fmt.Errorf("no job named %q", name)
 }
 
+func runTrigger(name string) error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	states, err := scheduler.ApplyStates(cfg)
+	if err != nil {
+		return err
+	}
+	state := scheduler.ApplyState("")
+	found := false
+	for _, st := range states {
+		if st.Name == name {
+			state, found = st.State, true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("no job named %q", name)
+	}
+	if state != scheduler.StateApplied {
+		switch state {
+		case scheduler.StateDisabled:
+			return fmt.Errorf("job %q is disabled; enable it and run `acron apply`", name)
+		case scheduler.StateDrifted:
+			return fmt.Errorf("job %q has drifted; run `acron apply` before triggering", name)
+		case scheduler.StateOrphaned:
+			return fmt.Errorf("job %q is orphaned: a unit is installed but it is not in the config", name)
+		default:
+			return fmt.Errorf("job %q is not applied; run `acron apply` first", name)
+		}
+	}
+	if runner.IsRunning(name) {
+		fmt.Printf("%s  %s  %s\n", runningStyle.Render("running"), name,
+			commentStyle.Render("a run is already in progress; not triggered"))
+		return nil
+	}
+	if err := scheduler.Trigger(name); err != nil {
+		return err
+	}
+	fmt.Printf("%s  %s\n", addStyle.Render("triggered"), name)
+	fmt.Println(commentStyle.Render("acron logs " + name))
+	return nil
+}
+
 func runStatus() error {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -240,6 +296,13 @@ func applyStateStyle(state scheduler.ApplyState) lipgloss.Style {
 }
 
 func renderLastRun(job string) (status, when string, err error) {
+	if since, ok := runner.RunningSince(job); ok {
+		status = runningStyle.Render("running")
+		if !since.IsZero() {
+			when = commentStyle.Render(since.Format("2006-01-02 15:04"))
+		}
+		return status, when, nil
+	}
 	rec, ok, err := runner.LastRecord(job)
 	if err != nil {
 		return "", "", err

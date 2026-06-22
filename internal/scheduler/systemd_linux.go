@@ -189,6 +189,12 @@ func disable(job string) {
 	_ = systemctl("disable", "--now", paths.TimerName(job))
 }
 
+// Trigger starts the Job's service unit now, out of schedule. --no-block returns
+// without waiting for the oneshot to finish, so the Run is detached.
+func Trigger(job string) error {
+	return systemctl("start", "--no-block", paths.ServiceName(job))
+}
+
 func systemctl(args ...string) error {
 	out, err := exec.Command("systemctl", append([]string{"--user"}, args...)...).CombinedOutput()
 	if err != nil {

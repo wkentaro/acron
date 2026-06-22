@@ -9,7 +9,7 @@ The underlying coding-agent CLI that acron triggers (e.g. Claude Code, Codex, op
 _Avoid_: Assistant, model, bot
 
 **Run**:
-A single execution of an agent triggered by the scheduler at a fired time. A Run ends with a status: `success`, `failure`, `timeout`, or `skipped` (the firing was dropped without running the agent — either the previous Run still held the lock, or the Condition was not met).
+A single execution of an agent triggered by the scheduler at a fired time. A Run ends with a status: `success`, `failure`, `timeout`, or `skipped` (the firing was dropped without running the agent — either the previous Run still held the lock, or the Condition was not met). While a Run is in flight it has no recorded status; `acron status` reports it as `running`, a live state derived from the held lock and never written to Run history.
 _Avoid_: Execution, invocation, trigger (as a noun)
 
 **Condition**:
@@ -39,6 +39,10 @@ _Avoid_: Sync, sync status, reconciliation state, install status, drift (as the 
 **Destroy**:
 The teardown operation (`acron destroy`) that removes all acron-owned units from the current machine while leaving the Config intact, so a later `apply` reinstalls them.
 _Avoid_: Uninstall, purge, clean
+
+**Trigger**:
+The on-demand operation (`acron trigger <job>`) that fires a Job once, immediately, out of schedule, by asking the OS scheduler to start the Job's unit now (detached, returning at once). A Trigger is an ordinary firing displaced in time: it passes through the same lock, Condition, timeout, and Run history as a scheduled firing, changing only _when_ it fires, never _what_ runs or _whether_ it runs. Requires the Job to be `applied`, refusing otherwise so a Trigger never runs a stale or absent unit.
+_Avoid_: Fire, start, run-now, dispatch (as the command name); trigger (as a noun, which stays a firing or a Run)
 
 **Schedule**:
 A Job's firing times, expressed as a cron expression (calendar/wall-clock semantics). acron translates it into the native scheduler form (systemd `OnCalendar`, launchd `StartCalendarInterval`).

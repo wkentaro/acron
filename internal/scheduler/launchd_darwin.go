@@ -169,6 +169,12 @@ func bootout(job string) {
 	_ = launchctl("bootout", domainTarget()+"/"+paths.PlistLabel(job))
 }
 
+// Trigger starts the Job's agent now, out of schedule. kickstart returns
+// immediately, so the Run is detached.
+func Trigger(job string) error {
+	return launchctl("kickstart", domainTarget()+"/"+paths.PlistLabel(job))
+}
+
 func launchctl(args ...string) error {
 	out, err := exec.Command("launchctl", args...).CombinedOutput()
 	if err != nil {

@@ -210,6 +210,7 @@ func TestResolveLogNoRuns(t *testing.T) {
 
 func TestRunLogsCopiesOutput(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	seedConfig(t, "job")
 	seedRuns(t, "job", makeThreeRuns())
 
 	out, err := captureStdout(t, func() error { return runLogs("job", "2") })
@@ -218,5 +219,25 @@ func TestRunLogsCopiesOutput(t *testing.T) {
 	}
 	if out != "output of 2026-06-22T01-00-00.log" {
 		t.Errorf("got %q", out)
+	}
+}
+
+func TestRunLogsUnknownJob(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	seedConfig(t, "job")
+
+	err := runLogs("nope", "")
+	if err == nil || !strings.Contains(err.Error(), `no job named "nope"`) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestRunLogsConfiguredJobNoRuns(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	seedConfig(t, "job")
+
+	err := runLogs("job", "")
+	if err == nil || !strings.Contains(err.Error(), "no runs") {
+		t.Fatalf("got %v", err)
 	}
 }

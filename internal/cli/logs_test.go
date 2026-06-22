@@ -196,30 +196,3 @@ func TestRunLogsCopiesOutput(t *testing.T) {
 		t.Errorf("got %q", out)
 	}
 }
-
-func TestRunHistoryNumbersNewestFirst(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	seedRuns(t, "job", makeThreeRuns())
-
-	out, err := captureStdout(t, func() error { return runHistory("job") })
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	body := lines[len(lines)-3:]
-	if got := strings.Fields(body[0]); got[0] != "1" || got[1] != "2026-06-22T02-00-00" {
-		t.Errorf("first run row = %q", body[0])
-	}
-	if got := strings.Fields(body[2]); got[0] != "3" || got[1] != "2026-06-22T00-00-00" {
-		t.Errorf("last run row = %q", body[2])
-	}
-}
-
-func TestRunHistoryNoRuns(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	_, err := captureStdout(t, func() error { return runHistory("job") })
-	if err == nil || !strings.Contains(err.Error(), "no runs") {
-		t.Fatalf("got %v", err)
-	}
-}

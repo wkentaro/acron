@@ -71,21 +71,10 @@ func newRunCmd() *cobra.Command {
 	}
 }
 
-func newListCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "list",
-		Short: "List jobs from the config",
-		Args:  cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
-			return runList()
-		},
-	}
-}
-
 func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "Show each job's last run status",
+		Short: "Show each job's apply state and last run",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			return runStatus()
@@ -165,54 +154,61 @@ func runJob(name string) error {
 	return fmt.Errorf("no job named %q", name)
 }
 
-func runList() error {
-	cfg, err := loadConfig()
-	if err != nil {
-		return err
-	}
-	if len(cfg.Jobs) == 0 {
-		fmt.Printf("No jobs in %s\n", config.DefaultPath())
-		return nil
-	}
-	rows := make([]row, 0, len(cfg.Jobs))
-	for _, job := range cfg.Jobs {
-		schedule := job.Schedule
-		if !job.IsEnabled() {
-			schedule += commentStyle.Render("  (disabled)")
-		}
-		rows = append(rows, row{left: cmdStyle.Render(job.Name), right: schedule})
-	}
-	var b strings.Builder
-	section(&b, "Jobs:", rows)
-	fmt.Print(b.String())
-	return nil
-}
-
 func runStatus() error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
-	if len(cfg.Jobs) == 0 {
+	states, err := scheduler.ApplyStates(cfg)
+	if err != nil {
+		return err
+	}
+	if len(states) == 0 {
 		fmt.Printf("No jobs in %s\n", config.DefaultPath())
 		return nil
 	}
-	rows := make([]row, 0, len(cfg.Jobs))
-	for _, job := range cfg.Jobs {
-		rec, ok, err := runner.LastRecord(job.Name)
+	rows := make([]row, 0, len(states))
+	for _, st := range states {
+		lastRun, err := renderLastRun(st.Name)
 		if err != nil {
 			return err
 		}
-		right := commentStyle.Render("never run")
-		if ok {
-			right = renderStatus(rec.Status, rec.Reason) + "  " + commentStyle.Render(formatWhen(rec.Start))
-		}
-		rows = append(rows, row{left: cmdStyle.Render(job.Name), right: right})
+		rows = append(rows, row{
+			left:  cmdStyle.Render(st.Name),
+			right: renderApplyState(st.State) + "  " + lastRun,
+		})
 	}
 	var b strings.Builder
 	section(&b, "Status:", rows)
 	fmt.Print(b.String())
 	return nil
+}
+
+func renderApplyState(state scheduler.ApplyState) string {
+	const width = 9 // len("unapplied"), the widest state label
+	return applyStateStyle(state).Width(width).Render(string(state))
+}
+
+func applyStateStyle(state scheduler.ApplyState) lipgloss.Style {
+	switch state {
+	case scheduler.StateApplied:
+		return addStyle
+	case scheduler.StateDrifted, scheduler.StateOrphaned:
+		return removeStyle
+	default:
+		return commentStyle
+	}
+}
+
+func renderLastRun(job string) (string, error) {
+	rec, ok, err := runner.LastRecord(job)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return commentStyle.Render("never run"), nil
+	}
+	return renderStatus(rec.Status, rec.Reason) + "  " + commentStyle.Render(formatWhen(rec.Start)), nil
 }
 
 func runLogs(job, run string, list bool) error {

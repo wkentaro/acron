@@ -17,3 +17,7 @@ func Apply(_ *config.Config, _ bool) (*Plan, error) {
 func Destroy() (*Plan, error) {
 	return nil, errUnsupported
 }
+
+func ApplyStates(_ *config.Config) ([]JobState, error) {
+	return nil, errUnsupported
+}

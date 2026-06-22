@@ -43,6 +43,14 @@ func (j Job) ResolvedTimeout() (time.Duration, error) {
 	return time.ParseDuration(j.Timeout)
 }
 
+func (j Job) NextFire(after time.Time) (time.Time, error) {
+	schedule, err := scheduleParser.Parse(j.Schedule)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return schedule.Next(after), nil
+}
+
 func DefaultPath() string {
 	if env := os.Getenv("ACRON_CONFIG"); env != "" {
 		return env

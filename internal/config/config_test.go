@@ -80,6 +80,24 @@ func TestResolvedTimeout(t *testing.T) {
 	}
 }
 
+func TestNextFire(t *testing.T) {
+	after := time.Date(2026, 6, 22, 23, 21, 0, 0, time.UTC)
+	got, err := Job{Schedule: "*/20 * * * *"}.NextFire(after)
+	if err != nil {
+		t.Fatalf("NextFire: %v", err)
+	}
+	want := time.Date(2026, 6, 22, 23, 40, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("NextFire = %v, want %v", got, want)
+	}
+}
+
+func TestNextFireRejectsBadSchedule(t *testing.T) {
+	if _, err := (Job{Schedule: "nonsense"}).NextFire(time.Now()); err == nil {
+		t.Error("expected error for unparseable schedule")
+	}
+}
+
 func TestIsEnabledDefaultsTrue(t *testing.T) {
 	if !(Job{}).IsEnabled() {
 		t.Error("unset enabled should default to true")

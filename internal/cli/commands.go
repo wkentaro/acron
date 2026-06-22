@@ -241,16 +241,38 @@ func runStatus() error {
 		fmt.Printf("No jobs in %s\n", config.DefaultPath())
 		return nil
 	}
+	jobs := make(map[string]config.Job, len(cfg.Jobs))
+	for _, job := range cfg.Jobs {
+		jobs[job.Name] = job
+	}
+	now := time.Now()
 	t := statusTable()
 	for _, st := range states {
 		status, when, err := renderLastRun(st.Name)
 		if err != nil {
 			return err
 		}
-		t.Row(cmdStyle.Render(st.Name), renderApplyState(st.State), status, when)
+		t.Row(cmdStyle.Render(st.Name), renderApplyState(st.State), status, when, renderNext(jobs[st.Name], st.State, now))
 	}
 	fmt.Print(renderStatusTable(t))
 	return nil
+}
+
+// renderNext shows the schedule's next fire only for applied jobs, where the
+// config-computed time equals what the installed unit will actually do. Drifted,
+// orphaned, unapplied, and disabled jobs would each show a time that does not
+// match reality, so they render a placeholder instead. Orphaned jobs have no
+// config entry, so the caller passes a zero Job; the non-applied guard returns
+// the placeholder before its empty schedule is ever read.
+func renderNext(job config.Job, state scheduler.ApplyState, now time.Time) string {
+	if state != scheduler.StateApplied {
+		return commentStyle.Render("—")
+	}
+	next, err := job.NextFire(now)
+	if err != nil || next.IsZero() {
+		return commentStyle.Render("—")
+	}
+	return commentStyle.Render(next.Local().Format(displayTimeFormat))
 }
 
 func renderStatusTable(t *table.Table) string {
@@ -267,6 +289,7 @@ func statusTable() *table.Table {
 		commentStyle.Render("APPLY"),
 		commentStyle.Render("LAST RUN"),
 		commentStyle.Render("WHEN"),
+		commentStyle.Render("NEXT"),
 	}
 	return table.New().
 		BorderTop(false).BorderBottom(false).BorderLeft(false).
@@ -299,7 +322,7 @@ func renderLastRun(job string) (status, when string, err error) {
 	if since, ok := runner.RunningSince(job); ok {
 		status = runningStyle.Render("running")
 		if !since.IsZero() {
-			when = commentStyle.Render(since.Format("2006-01-02 15:04"))
+			when = commentStyle.Render(since.Format(displayTimeFormat))
 		}
 		return status, when, nil
 	}
@@ -559,10 +582,12 @@ func statusStyle(status runner.Status) lipgloss.Style {
 	}
 }
 
+const displayTimeFormat = "2006-01-02 15:04"
+
 func formatWhen(ts string) string {
 	t, err := time.Parse(time.RFC3339, ts)
 	if err != nil {
 		return ts
 	}
-	return t.Local().Format("2006-01-02 15:04")
+	return t.Local().Format(displayTimeFormat)
 }

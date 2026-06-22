@@ -25,6 +25,10 @@ type fields struct {
 	day     []int
 	month   []int
 	weekday []int
+	// domDowOr is set when both day-of-month and day-of-week are restricted, so
+	// POSIX cron fires when either matches. The two backends express this OR by
+	// emitting two match points instead of one.
+	domDowOr bool
 }
 
 // ToLaunchd translates a 5-field cron expression with calendar semantics into
@@ -38,13 +42,16 @@ func ToLaunchd(expr string) ([]CalendarInterval, error) {
 	return f.intervals()
 }
 
-// ToSystemd translates a 5-field cron expression into a systemd OnCalendar
-// value (`DOW *-MM-DD HH:MM:00`). Lists, ranges, and steps render as systemd's
-// native comma-separated field syntax.
-func ToSystemd(expr string) (string, error) {
+// ToSystemd translates a 5-field cron expression into systemd OnCalendar values
+// (`DOW *-MM-DD HH:MM:00`). Lists, ranges, and steps render as systemd's native
+// comma-separated field syntax. A combined day-of-month + day-of-week schedule
+// yields two values (a date-only and a weekday-only line); systemd unions
+// multiple OnCalendar= lines, which gives the POSIX OR semantics. Every
+// returned value must be emitted as its own OnCalendar= directive.
+func ToSystemd(expr string) ([]string, error) {
 	f, err := parse(expr)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	return f.onCalendar(), nil
 }
@@ -75,16 +82,32 @@ func parse(expr string) (fields, error) {
 		}
 		*spec.dst = values
 	}
-	// POSIX cron ORs day-of-month and day-of-week when both are restricted,
-	// which neither backend can represent. A field starting with "*" (e.g.
-	// "*/2") is unrestricted here even though it parses to a populated slice,
-	// so the check reads the raw field rather than f.day/f.weekday.
+	// POSIX cron ORs day-of-month and day-of-week when both are restricted. A
+	// field starting with "*" (e.g. "*/2") is unrestricted here even though it
+	// parses to a populated slice, so the check reads the raw field rather than
+	// f.day/f.weekday.
 	domRestricted := !strings.HasPrefix(cronFields[2], "*")
 	dowRestricted := !strings.HasPrefix(cronFields[4], "*")
-	if domRestricted && dowRestricted {
-		return fields{}, fmt.Errorf("schedule %q: combined day-of-month and day-of-week (POSIX OR) is not supported yet", expr)
-	}
+	f.domDowOr = domRestricted && dowRestricted
 	return f, nil
+}
+
+// domDowArm is one (day, weekday) pair to expand into match points.
+type domDowArm struct{ day, weekday []int }
+
+// domDowArms returns the (day, weekday) field pairs to expand. Normally that is
+// the single pair as given, but when both day-of-month and day-of-week are
+// restricted POSIX cron fires when either matches, which neither backend can
+// express in one match point. The OR then becomes two arms, one matching by day
+// (weekday omitted) and one by weekday (day omitted).
+func (f fields) domDowArms() []domDowArm {
+	if f.domDowOr {
+		return []domDowArm{
+			{day: f.day},
+			{weekday: f.weekday},
+		}
+	}
+	return []domDowArm{{day: f.day, weekday: f.weekday}}
 }
 
 // intervals builds the cartesian product of the per-field value sets, one
@@ -99,29 +122,39 @@ func (f fields) intervals() ([]CalendarInterval, error) {
 	const maxLaunchdIntervals = 100000
 
 	months := pointers(f.month)
-	days := pointers(f.day)
-	weekdays := pointers(f.weekday)
 	hours := pointers(f.hour)
 	minutes := pointers(f.minute)
 
-	count := len(months) * len(days) * len(weekdays) * len(hours) * len(minutes)
+	type expandedArm struct{ days, weekdays []*int }
+	rawArms := f.domDowArms()
+	arms := make([]expandedArm, len(rawArms))
+	for i, arm := range rawArms {
+		arms[i] = expandedArm{pointers(arm.day), pointers(arm.weekday)}
+	}
+
+	count := 0
+	for _, arm := range arms {
+		count += len(months) * len(arm.days) * len(arm.weekdays) * len(hours) * len(minutes)
+	}
 	if count > maxLaunchdIntervals {
 		return nil, fmt.Errorf("schedule expands to %d launchd entries, exceeding the limit of %d; use a coarser schedule", count, maxLaunchdIntervals)
 	}
 
 	out := make([]CalendarInterval, 0, count)
-	for _, month := range months {
-		for _, day := range days {
-			for _, weekday := range weekdays {
-				for _, hour := range hours {
-					for _, minute := range minutes {
-						out = append(out, CalendarInterval{
-							Minute:  minute,
-							Hour:    hour,
-							Day:     day,
-							Weekday: weekday,
-							Month:   month,
-						})
+	for _, arm := range arms {
+		for _, month := range months {
+			for _, day := range arm.days {
+				for _, weekday := range arm.weekdays {
+					for _, hour := range hours {
+						for _, minute := range minutes {
+							out = append(out, CalendarInterval{
+								Minute:  minute,
+								Hour:    hour,
+								Day:     day,
+								Weekday: weekday,
+								Month:   month,
+							})
+						}
 					}
 				}
 			}
@@ -143,19 +176,28 @@ func pointers(values []int) []*int {
 	return out
 }
 
-func (f fields) onCalendar() string {
+func (f fields) onCalendar() []string {
+	arms := f.domDowArms()
+	lines := make([]string, len(arms))
+	for i, arm := range arms {
+		lines[i] = f.onCalendarLine(arm.day, arm.weekday)
+	}
+	return lines
+}
+
+func (f fields) onCalendarLine(day, weekday []int) string {
 	var b strings.Builder
-	if len(f.weekday) > 0 {
+	if len(weekday) > 0 {
 		weekdayNames := [...]string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
-		names := make([]string, len(f.weekday))
-		for i, wd := range f.weekday {
+		names := make([]string, len(weekday))
+		for i, wd := range weekday {
 			names[i] = weekdayNames[wd]
 		}
 		b.WriteString(strings.Join(names, ","))
 		b.WriteByte(' ')
 	}
 	fmt.Fprintf(&b, "*-%s-%s %s:%s:00",
-		calendarField(f.month), calendarField(f.day),
+		calendarField(f.month), calendarField(day),
 		calendarField(f.hour), calendarField(f.minute))
 	return b.String()
 }

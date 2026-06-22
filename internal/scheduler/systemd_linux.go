@@ -219,12 +219,14 @@ func renderService(job config.Job, self string, env map[string]string) string {
 	return b.String()
 }
 
-func renderTimer(job, onCalendar string) string {
+func renderTimer(job string, onCalendar []string) string {
 	var b strings.Builder
 	b.WriteString("[Unit]\n")
 	fmt.Fprintf(&b, "Description=acron job %s\n\n", job)
 	b.WriteString("[Timer]\n")
-	fmt.Fprintf(&b, "OnCalendar=%s\n", onCalendar)
+	for _, line := range onCalendar {
+		fmt.Fprintf(&b, "OnCalendar=%s\n", line)
+	}
 	b.WriteString("Persistent=true\n\n")
 	b.WriteString("[Install]\n")
 	b.WriteString("WantedBy=timers.target\n")

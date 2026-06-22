@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -193,7 +194,10 @@ const (
 
 // evalCondition runs the Job's condition (if any) before the agent. proceed is
 // true when the agent should run; otherwise the Run has already been recorded
-// (a skip, or a failure when the check itself broke) and proceed is false.
+// (a skip, or a failure when the check itself broke) and proceed is false. A
+// passing condition prints a marker straight to stdout before the agent
+// streams; it never reaches the captured run log, so a stream-json log stays
+// byte-for-byte the agent's own output.
 func evalCondition(job config.Job, timeout time.Duration) (Result, bool, error) {
 	if len(job.Condition) == 0 {
 		return Result{}, true, nil
@@ -210,6 +214,7 @@ func evalCondition(job config.Job, timeout time.Duration) (Result, bool, error) 
 		result, err := recordConditionFailure(job.Name, start, exit, buf.Bytes())
 		return result, false, err
 	default:
+		fmt.Printf("condition passed %s\n", job.Name)
 		return Result{}, true, nil
 	}
 }

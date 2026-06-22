@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -128,6 +129,38 @@ func TestRunConditionProceeds(t *testing.T) {
 	}
 }
 
+func TestRunConditionPassPrintsMarker(t *testing.T) {
+	job := echoJob(t)
+	job.Condition = []string{"/bin/sh", "-c", "exit 0"}
+
+	out := captureStdout(t, func() {
+		if _, err := Run(job); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	marker := "condition passed " + job.Name
+	markerAt := strings.Index(out, marker)
+	agentAt := strings.Index(out, "out: hello")
+	if markerAt < 0 || agentAt < 0 || markerAt > agentAt {
+		t.Errorf("want marker before agent output in stdout = %q", out)
+	}
+}
+
+func TestRunNoConditionOmitsMarker(t *testing.T) {
+	job := echoJob(t)
+
+	out := captureStdout(t, func() {
+		if _, err := Run(job); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	if strings.Contains(out, "condition passed") {
+		t.Errorf("stdout = %q, want no condition marker", out)
+	}
+}
+
 func TestRunConditionSkips(t *testing.T) {
 	job := echoJob(t)
 	job.Condition = []string{"/bin/sh", "-c", "exit 1"}
@@ -237,6 +270,31 @@ func TestRetentionSkipsDoNotEvictRealRuns(t *testing.T) {
 	if skip != keepRuns {
 		t.Errorf("kept %d skips, want %d", skip, keepRuns)
 	}
+}
+
+// captureStdout swaps os.Stdout for a pipe while fn runs and returns what fn
+// wrote. The swap is process-global, so callers must not run in parallel. fn's
+// output must stay under the pipe buffer (these tests emit a few bytes), since
+// it is drained only after fn returns.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	t.Cleanup(func() {
+		os.Stdout = orig
+		_ = r.Close()
+	})
+	fn()
+	_ = w.Close()
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func logFiles(t *testing.T, job string) []string {

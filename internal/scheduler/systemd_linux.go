@@ -203,8 +203,10 @@ func renderService(job config.Job, self string, env map[string]string) string {
 	fmt.Fprintf(&b, "Description=acron job %s\n\n", job.Name)
 	b.WriteString("[Service]\n")
 	b.WriteString("Type=oneshot\n")
-	fmt.Fprintf(&b, "ExecStart=%s run %s\n", self, job.Name)
-	fmt.Fprintf(&b, "WorkingDirectory=%s\n", paths.ExpandHome(job.Cwd))
+	fmt.Fprintf(&b, "ExecStart=\"%s\" run %s\n", escapeEnv(self), job.Name)
+	// WorkingDirectory is specifier-expanded but not C-unescaped, so only "%" is
+	// a metacharacter; backslashes and quotes are literal (envEscaper would corrupt them).
+	fmt.Fprintf(&b, "WorkingDirectory=%s\n", strings.ReplaceAll(paths.ExpandHome(job.Cwd), "%", "%%"))
 	b.WriteString("StandardOutput=null\n")
 	b.WriteString("StandardError=null\n")
 
@@ -214,7 +216,7 @@ func renderService(job config.Job, self string, env map[string]string) string {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		fmt.Fprintf(&b, "Environment=\"%s=%s\"\n", k, escapeEnv(env[k]))
+		fmt.Fprintf(&b, "Environment=\"%s=%s\"\n", escapeEnv(k), escapeEnv(env[k]))
 	}
 	return b.String()
 }
@@ -233,6 +235,8 @@ func renderTimer(job string, onCalendar []string) string {
 	return b.String()
 }
 
+// envEscaper escapes a string for a double-quoted, C-unescaped, specifier-expanded
+// context (ExecStart args and Environment assignments).
 var envEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "%", "%%")
 
 func escapeEnv(s string) string {

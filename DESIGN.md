@@ -59,6 +59,7 @@ cwd      = "~/src/acron"      # required, absolute or ~-expanded
 enabled  = true               # optional, default true
 timeout  = "1h"               # optional, default "1h"; 0 disables the timeout
 env      = { TZ = "Asia/Tokyo" }  # optional, portable extra vars
+condition = ["sh", "-c", "gh pr list | grep -q ."]  # optional gate; skip unless exit 0
 ```
 
 ### Fields
@@ -82,6 +83,10 @@ env      = { TZ = "Asia/Tokyo" }  # optional, portable extra vars
   explicitly (accepting the wedge risk below).
 - **env**: optional table of extra environment variables, merged on top of the
   baked PATH and HOME/USER.
+- **condition**: optional argv run at fire time, before the agent, with the same
+  `cwd` and `env` (no `{prompt}` substitution). Exit `0` runs the agent; `1`-`254`
+  drops the firing as `skipped`; `255`/signal records a `failure`. Lets a Job be
+  scheduled often but do work only when there is work to do (ADR-0010).
 
 ### Validation
 
@@ -135,21 +140,28 @@ The wrapper that the scheduler invokes. It owns the three pillars (ADR-0007):
 
 1. **Acquire the lock** `~/.local/state/acron/locks/<job>.lock`. If it is already
    held, the previous Run is still going: drop this firing, append a `skipped`
-   record to Run history, exit 0. This overlap policy is fixed (no `queue`/`allow`).
+   record (reason `overlap`) to Run history, exit 0. This overlap policy is fixed
+   (no `queue`/`allow`), and takes precedence over the condition.
 2. **Set up the environment** (see Environment), `chdir` to `cwd`, and redirect
    stdin from `/dev/null` so a non-interactive agent never blocks on input.
-3. **Exec the agent**: substitute `prompt` for `{prompt}` in `agent` (or append),
+3. **Evaluate the condition** (if set): run the `condition` argv before the agent,
+   bounded by the same `timeout`. Exit `0` proceeds; `1`-`254` drops the firing as
+   `skipped` (reason `condition`, no log); `255`/signal records a `failure` with
+   the check's output logged for diagnosis. Mirrors systemd `ExecCondition=`
+   (ADR-0010).
+4. **Exec the agent**: substitute `prompt` for `{prompt}` in `agent` (or append),
    then exec directly (no shell).
-4. **Capture output**: combined stdout+stderr (interleaved) to the per-Run log
+5. **Capture output**: combined stdout+stderr (interleaved) to the per-Run log
    `~/.local/state/acron/runs/<job>/<timestamp>.log`.
-5. **Enforce timeout**: on expiry send SIGTERM, then SIGKILL after a short grace.
+6. **Enforce timeout**: on expiry send SIGTERM, then SIGKILL after a short grace.
    Default 1h; `0` disables. A killed Run is recorded as `timeout`. The default
    exists because skip-if-running means a hung Run would otherwise hold the lock
    and wedge the Job silently forever; skip and timeout are coupled by design.
-6. **Record history**: append one line to `runs/<job>/history.jsonl` with start,
-   end, exit code, status, duration, and log path. Prune per-Run logs and history
-   to the most recent 50 Runs per Job.
-7. **Release the lock.**
+7. **Record history**: append one line to `runs/<job>/history.jsonl` with start,
+   end, exit code, status, duration, log path, and (for skips and condition
+   failures) a `reason`. Prune to the most recent 50 real Runs and, independently,
+   the most recent 50 skipped Runs, so skips never evict real Runs.
+8. **Release the lock.**
 
 ### Run history record
 
@@ -157,8 +169,11 @@ One JSON object per line in `runs/<job>/history.jsonl`:
 
 ```json
 {"start":"2026-06-21T02:00:00Z","end":"2026-06-21T02:13:48Z","status":"success","exit":0,"duration_s":828,"log":"2026-06-21T02:00:00.log"}
+{"start":"2026-06-21T03:00:00Z","end":"2026-06-21T03:00:00Z","status":"skipped","reason":"condition","exit":0,"duration_s":0,"log":""}
 ```
 
+A `skipped` record carries a `reason` (`overlap` or `condition`) and no `log`;
+condition failures carry `reason: condition` with `status: failure` and a log.
 `acron status` reads the last record per Job; `acron logs` reads the records to
 resolve `--run` and `--list`.
 

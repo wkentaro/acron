@@ -156,7 +156,7 @@ func runJob(name string) error {
 			return err
 		}
 		fmt.Printf("%s  %s  exit %d  %s\n",
-			statusStyle(result.Status).Render(string(result.Status)), name, result.Exit, result.Duration.Round(time.Second))
+			renderStatus(result.Status, result.Reason), name, result.Exit, result.Duration.Round(time.Second))
 		if result.LogPath != "" {
 			fmt.Println(commentStyle.Render(result.LogPath))
 		}
@@ -205,7 +205,7 @@ func runStatus() error {
 		}
 		right := commentStyle.Render("never run")
 		if ok {
-			right = statusStyle(rec.Status).Render(string(rec.Status)) + "  " + commentStyle.Render(formatWhen(rec.Start))
+			right = renderStatus(rec.Status, rec.Reason) + "  " + commentStyle.Render(formatWhen(rec.Start))
 		}
 		rows = append(rows, row{left: cmdStyle.Render(job.Name), right: right})
 	}
@@ -249,7 +249,7 @@ func listRuns(job string) error {
 		}
 		rows = append(rows, row{
 			left:  argStyle.Render(label),
-			right: statusStyle(rec.Status).Render(string(rec.Status)),
+			right: renderStatus(rec.Status, rec.Reason),
 		})
 	}
 	var b strings.Builder
@@ -353,6 +353,7 @@ func initialBuffer(path string) ([]byte, error) {
 # enabled  = true                         # optional, default true
 # timeout  = "1h"                         # optional, default "1h"; 0 disables
 # env      = { TZ = "Asia/Tokyo" }        # optional, extra environment vars
+# condition = ["sh", "-c", "gh pr list | grep -q ."] # optional gate; skip agent unless exit 0
 `
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -421,6 +422,14 @@ func printPlan(plan *scheduler.Plan, dryRun bool) {
 	for _, name := range plan.Removed {
 		fmt.Printf("  %s %s\n", removeStyle.Render("-"), name)
 	}
+}
+
+func renderStatus(status runner.Status, reason runner.Reason) string {
+	label := string(status)
+	if reason != "" {
+		label += " (" + string(reason) + ")"
+	}
+	return statusStyle(status).Render(label)
 }
 
 func statusStyle(status runner.Status) lipgloss.Style {

@@ -33,6 +33,16 @@ Roadmap for the work remaining after the macOS (launchd) runtime. See
 - [x] `edit`: open the config in `$EDITOR`, validate on save (currently a stub).
 - [ ] `status` / `list`: show next fire time.
 
+### Conditions
+
+- [x] `condition`: optional per-Job precondition command run in the wrapper before
+      the agent (lock → condition → agent). Mirror systemd `ExecCondition=`: exit
+      `0` proceeds, `1`-`254` records a `skipped` Run (`reason: condition`), `255`/
+      signal is a `failure`. Add a `reason` field to `history.jsonl` (overlap
+      skips now carry `reason: overlap`); skip caps independent from real Runs (50 each).
+      Inherit `cwd`/`env`, no `{prompt}` substitution, bound by the Job `timeout`.
+      See ADR-0010.
+
 ### Runtime polish
 
 - [ ] Same-second log filename collision: sub-second timestamp or per-run

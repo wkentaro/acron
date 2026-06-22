@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -31,8 +32,21 @@ const (
 	StatusSkipped Status = "skipped"
 )
 
+// Reason qualifies a Run's status when the agent did not produce it: the firing
+// was dropped (ReasonOverlap, or ReasonCondition for a clean skip), or the
+// condition check itself broke (ReasonCondition with StatusFailure). ReasonNone
+// is the zero value, used when the agent ran and produced the status.
+type Reason string
+
+const (
+	ReasonNone      Reason = ""
+	ReasonOverlap   Reason = "overlap"
+	ReasonCondition Reason = "condition"
+)
+
 type Result struct {
 	Status   Status
+	Reason   Reason
 	Exit     int
 	Duration time.Duration
 	LogPath  string
@@ -42,6 +56,7 @@ type Record struct {
 	Start     string `json:"start"`
 	End       string `json:"end"`
 	Status    Status `json:"status"`
+	Reason    Reason `json:"reason,omitempty"`
 	Exit      int    `json:"exit"`
 	DurationS int    `json:"duration_s"`
 	Log       string `json:"log"`
@@ -58,10 +73,18 @@ func Run(job config.Job) (Result, error) {
 		return Result{}, err
 	}
 	if !held {
-		return recordSkipped(job.Name)
+		return recordSkipped(job.Name, ReasonOverlap)
 	}
 	defer releaseLock(lock)
 
+	if result, proceed, err := evalCondition(job, timeout); err != nil || !proceed {
+		return result, err
+	}
+
+	return runAgent(job, timeout)
+}
+
+func runAgent(job config.Job, timeout time.Duration) (Result, error) {
 	runsDir := paths.RunsDir(job.Name)
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
 		return Result{}, err
@@ -69,42 +92,67 @@ func Run(job config.Job) (Result, error) {
 
 	start := time.Now()
 	logName := start.Format(timestampLayout) + ".log"
-	logPath := filepath.Join(runsDir, logName)
-	logFile, err := os.Create(logPath)
+	logFile, err := os.Create(filepath.Join(runsDir, logName))
 	if err != nil {
 		return Result{}, err
 	}
 	defer func() { _ = logFile.Close() }()
 
 	exit, status := execAgent(job, timeout, io.MultiWriter(logFile, os.Stdout))
-	duration := time.Since(start)
+	return finishRun(job.Name, start, status, ReasonNone, exit, logName)
+}
 
+func recordSkipped(job string, reason Reason) (Result, error) {
+	now := time.Now().Format(time.RFC3339)
+	rec := Record{Start: now, End: now, Status: StatusSkipped, Reason: reason}
+	if err := appendHistory(job, rec); err != nil {
+		return Result{}, err
+	}
+	trimHistory(job)
+	return Result{Status: StatusSkipped, Reason: reason}, nil
+}
+
+func finishRun(job string, start time.Time, status Status, reason Reason, exit int, logName string) (Result, error) {
+	duration := time.Since(start)
 	rec := Record{
 		Start:     start.Format(time.RFC3339),
 		End:       start.Add(duration).Format(time.RFC3339),
 		Status:    status,
+		Reason:    reason,
 		Exit:      exit,
 		DurationS: int(duration.Seconds()),
 		Log:       logName,
 	}
-	if err := appendHistory(job.Name, rec); err != nil {
+	if err := appendHistory(job, rec); err != nil {
 		return Result{}, err
 	}
-	pruneRuns(job.Name)
-
-	return Result{Status: status, Exit: exit, Duration: duration, LogPath: logPath}, nil
-}
-
-func recordSkipped(job string) (Result, error) {
-	now := time.Now().Format(time.RFC3339)
-	if err := appendHistory(job, Record{Start: now, End: now, Status: StatusSkipped}); err != nil {
-		return Result{}, err
-	}
-	trimHistory(job)
-	return Result{Status: StatusSkipped}, nil
+	pruneRuns(job)
+	return Result{
+		Status:   status,
+		Reason:   reason,
+		Exit:     exit,
+		Duration: duration,
+		LogPath:  filepath.Join(paths.RunsDir(job), logName),
+	}, nil
 }
 
 func execAgent(job config.Job, timeout time.Duration, out io.Writer) (int, Status) {
+	exit, timedOut, err := runCmd(substitutePrompt(job.Agent, job.Prompt), job, timeout, out)
+	switch {
+	case err == nil:
+		return 0, StatusSuccess
+	case timedOut:
+		return exit, StatusTimeout
+	default:
+		return exit, StatusFailure
+	}
+}
+
+// runCmd executes argv with the Job's cwd and env, sending combined output to
+// out, bounded by timeout (SIGTERM, then SIGKILL after killGrace). It returns
+// the process exit code (-1 if it never produced one), whether the timeout
+// fired, and the run error.
+func runCmd(argv []string, job config.Job, timeout time.Duration, out io.Writer) (int, bool, error) {
 	ctx := context.Background()
 	cancel := func() {}
 	if timeout > 0 {
@@ -112,7 +160,6 @@ func execAgent(job config.Job, timeout time.Duration, out io.Writer) (int, Statu
 	}
 	defer cancel()
 
-	argv := substitutePrompt(job.Agent, job.Prompt)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = paths.ExpandHome(job.Cwd)
 	cmd.Env = jobEnv(job)
@@ -125,15 +172,77 @@ func execAgent(job config.Job, timeout time.Duration, out io.Writer) (int, Statu
 	err := cmd.Run()
 	switch {
 	case err == nil:
-		return 0, StatusSuccess
+		return 0, false, nil
 	case ctx.Err() == context.DeadlineExceeded:
-		return -1, StatusTimeout
+		return -1, true, err
 	default:
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode(), StatusFailure
+			return exitErr.ExitCode(), false, err
 		}
-		return -1, StatusFailure
+		return -1, false, err
 	}
+}
+
+type conditionOutcome int
+
+const (
+	conditionProceed conditionOutcome = iota
+	conditionSkip
+	conditionFail
+)
+
+// evalCondition runs the Job's condition (if any) before the agent. proceed is
+// true when the agent should run; otherwise the Run has already been recorded
+// (a skip, or a failure when the check itself broke) and proceed is false.
+func evalCondition(job config.Job, timeout time.Duration) (Result, bool, error) {
+	if len(job.Condition) == 0 {
+		return Result{}, true, nil
+	}
+
+	start := time.Now()
+	var buf bytes.Buffer
+	exit, outcome := execCondition(job, timeout, &buf)
+	switch outcome {
+	case conditionSkip:
+		result, err := recordSkipped(job.Name, ReasonCondition)
+		return result, false, err
+	case conditionFail:
+		result, err := recordConditionFailure(job.Name, start, exit, buf.Bytes())
+		return result, false, err
+	default:
+		return Result{}, true, nil
+	}
+}
+
+// execCondition runs the condition command and maps its exit to an outcome,
+// mirroring systemd ExecCondition=: 0 proceeds, 1-254 is a clean skip, and 255
+// or death by signal/timeout is a failure (the check itself is broken).
+func execCondition(job config.Job, timeout time.Duration, out io.Writer) (int, conditionOutcome) {
+	exit, timedOut, err := runCmd(job.Condition, job, timeout, out)
+	switch {
+	case err == nil:
+		return 0, conditionProceed
+	case timedOut:
+		return exit, conditionFail
+	case exit >= 1 && exit <= 254:
+		return exit, conditionSkip
+	default:
+		return exit, conditionFail
+	}
+}
+
+// recordConditionFailure records a Run where the condition check itself broke.
+// Unlike a clean skip, its output is worth keeping, so it writes a log file.
+func recordConditionFailure(job string, start time.Time, exit int, output []byte) (Result, error) {
+	runsDir := paths.RunsDir(job)
+	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+		return Result{}, err
+	}
+	logName := start.Format(timestampLayout) + ".log"
+	if err := os.WriteFile(filepath.Join(runsDir, logName), output, 0o644); err != nil {
+		return Result{}, err
+	}
+	return finishRun(job, start, StatusFailure, ReasonCondition, exit, logName)
 }
 
 func acquireLock(job string) (*os.File, bool, error) {
@@ -255,14 +364,52 @@ func pruneRuns(job string) {
 
 func trimHistory(job string) {
 	records, err := History(job)
-	if err != nil || len(records) <= keepRuns {
+	if err != nil {
+		return
+	}
+	kept := retainHistory(records)
+	if len(kept) == len(records) {
 		return
 	}
 	var b strings.Builder
-	for _, rec := range records[len(records)-keepRuns:] {
+	for _, rec := range kept {
 		line, _ := json.Marshal(rec)
 		b.Write(line)
 		b.WriteByte('\n')
 	}
 	_ = os.WriteFile(paths.HistoryPath(job), []byte(b.String()), 0o644)
+}
+
+// retainHistory keeps the last keepRuns real Runs and, independently, the last
+// keepRuns skipped Runs, in chronological order. Independent caps mean no volume
+// of skips can ever evict a real Run from the history.
+func retainHistory(records []Record) []Record {
+	totalReal, totalSkip := 0, 0
+	for _, rec := range records {
+		if rec.Status == StatusSkipped {
+			totalSkip++
+		} else {
+			totalReal++
+		}
+	}
+	dropReal := max(0, totalReal-keepRuns)
+	dropSkip := max(0, totalSkip-keepRuns)
+
+	seenReal, seenSkip := 0, 0
+	kept := make([]Record, 0, len(records))
+	for _, rec := range records {
+		if rec.Status == StatusSkipped {
+			seenSkip++
+			if seenSkip <= dropSkip {
+				continue
+			}
+		} else {
+			seenReal++
+			if seenReal <= dropReal {
+				continue
+			}
+		}
+		kept = append(kept, rec)
+	}
+	return kept
 }

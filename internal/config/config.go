@@ -15,14 +15,15 @@ import (
 )
 
 type Job struct {
-	Name     string            `toml:"name"`
-	Schedule string            `toml:"schedule"`
-	Agent    []string          `toml:"agent"`
-	Prompt   string            `toml:"prompt"`
-	Cwd      string            `toml:"cwd"`
-	Enabled  *bool             `toml:"enabled"`
-	Timeout  string            `toml:"timeout"`
-	Env      map[string]string `toml:"env"`
+	Name      string            `toml:"name"`
+	Schedule  string            `toml:"schedule"`
+	Agent     []string          `toml:"agent"`
+	Prompt    string            `toml:"prompt"`
+	Cwd       string            `toml:"cwd"`
+	Enabled   *bool             `toml:"enabled"`
+	Timeout   string            `toml:"timeout"`
+	Env       map[string]string `toml:"env"`
+	Condition []string          `toml:"condition"`
 }
 
 type Config struct {
@@ -121,6 +122,10 @@ func validateJob(job Job, index int, seen map[string]bool) []string {
 
 	if _, err := job.ResolvedTimeout(); err != nil {
 		report(fmt.Sprintf("invalid timeout %q: %v", job.Timeout, err))
+	}
+
+	if len(job.Condition) > 0 && job.Condition[0] == "" {
+		report("condition command is empty")
 	}
 
 	return problems

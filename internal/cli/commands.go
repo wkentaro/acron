@@ -26,6 +26,17 @@ func loadConfig() (*config.Config, error) {
 	return loadAndValidate(config.DefaultPath())
 }
 
+func requireJob(name string) error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	if _, ok := cfg.FindJob(name); !ok {
+		return fmt.Errorf("no job named %q", name)
+	}
+	return nil
+}
+
 func loadAndValidate(path string) (*config.Config, error) {
 	cfg, err := config.Load(path)
 	if err != nil {
@@ -343,6 +354,9 @@ func renderLastRun(job string) (status, when string, err error) {
 }
 
 func runLogs(job, selector string) error {
+	if err := requireJob(job); err != nil {
+		return err
+	}
 	name, err := resolveLog(job, selector)
 	if err != nil {
 		return err

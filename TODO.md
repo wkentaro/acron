@@ -30,7 +30,7 @@ Roadmap for the work remaining after the macOS (launchd) runtime. See
 
 ### Commands
 
-- [ ] `edit`: open the config in `$EDITOR`, validate on save (currently a stub).
+- [x] `edit`: open the config in `$EDITOR`, validate on save (currently a stub).
 - [ ] `status` / `list`: show next fire time.
 
 ### Runtime polish

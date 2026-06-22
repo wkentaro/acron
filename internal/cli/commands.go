@@ -118,11 +118,19 @@ acron logs nightly-triage 2026-06-22T02-00-00   # A specific run by timestamp
 
 func newHistoryCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "history <job>",
-		Short: "List a job's past runs",
-		Args:  cobra.ExactArgs(1),
+		Use:   "history [job]",
+		Short: "List past runs",
+		Args:  cobra.MaximumNArgs(1),
+		Example: `
+acron history                 # All jobs
+acron history nightly-triage  # One job
+`,
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runHistory(args[0])
+			name := ""
+			if len(args) == 1 {
+				name = args[0]
+			}
+			return runHistory(name)
 		},
 	}
 }
@@ -236,7 +244,7 @@ func runStatus() error {
 		return err
 	}
 	if len(states) == 0 {
-		fmt.Printf("No jobs in %s\n", config.DefaultPath())
+		printNoJobs()
 		return nil
 	}
 	t := statusTable()
@@ -325,15 +333,59 @@ func runLogs(job, selector string) error {
 	return err
 }
 
-func runHistory(job string) error {
-	records, err := runner.History(job)
+func runHistory(name string) error {
+	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
-	if len(records) == 0 {
-		return fmt.Errorf("no runs for job %q", job)
+
+	var jobs []config.Job
+	if name == "" {
+		jobs = cfg.Jobs
+	} else {
+		job, ok := cfg.FindJob(name)
+		if !ok {
+			return fmt.Errorf("no job named %q", name)
+		}
+		jobs = []config.Job{job}
 	}
-	indexWidth := len(strconv.Itoa(len(records)))
+
+	if len(jobs) == 0 {
+		printNoJobs()
+		return nil
+	}
+
+	allRecords := make([][]runner.Record, len(jobs))
+	indexWidth := 1
+	for i, job := range jobs {
+		records, err := runner.History(job.Name)
+		if err != nil {
+			return err
+		}
+		allRecords[i] = records
+		if w := len(strconv.Itoa(len(records))); w > indexWidth {
+			indexWidth = w
+		}
+	}
+
+	sections := make([]string, len(jobs))
+	for i, job := range jobs {
+		sections[i] = renderJobHistory(job.Name, allRecords[i], indexWidth)
+	}
+	fmt.Print(strings.Join(sections, "\n"))
+	return nil
+}
+
+func printNoJobs() {
+	fmt.Printf("No jobs in %s\n", config.DefaultPath())
+}
+
+func renderJobHistory(jobName string, records []runner.Record, indexWidth int) string {
+	var b strings.Builder
+	if len(records) == 0 {
+		section(&b, cmdStyle.Render(jobName), []row{{left: commentStyle.Render("never run")}})
+		return b.String()
+	}
 	rows := make([]row, 0, len(records))
 	for i := len(records) - 1; i >= 0; i-- {
 		rec := records[i]
@@ -347,10 +399,8 @@ func runHistory(job string) error {
 			right: renderStatus(rec.Status, rec.Reason),
 		})
 	}
-	var b strings.Builder
-	section(&b, "Runs:", rows)
-	fmt.Print(b.String())
-	return nil
+	section(&b, cmdStyle.Render(jobName), rows)
+	return b.String()
 }
 
 func resolveLog(job, selector string) (string, error) {

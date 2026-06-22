@@ -9,8 +9,12 @@ The underlying coding-agent CLI that acron triggers (e.g. Claude Code, Codex, op
 _Avoid_: Assistant, model, bot
 
 **Run**:
-A single execution of an agent triggered by the scheduler at a fired time. A Run ends with a status: `success`, `failure`, `timeout`, or `skipped` (the firing was dropped because the previous Run still held the lock).
+A single execution of an agent triggered by the scheduler at a fired time. A Run ends with a status: `success`, `failure`, `timeout`, or `skipped` (the firing was dropped without running the agent — either the previous Run still held the lock, or the Condition was not met).
 _Avoid_: Execution, invocation, trigger (as a noun)
+
+**Condition**:
+An optional user-supplied command run at fire time, before the agent, whose outcome decides whether the agent runs at all. Lets a Job be scheduled frequently but do work only when there is work to do. A firing dropped by its Condition is recorded as a `skipped` Run.
+_Avoid_: Gate, guard, predicate, when, unless
 
 **Run history**:
 The append-only record of a Job's past Runs (start, end, exit code, status, duration, log path), kept as `history.jsonl` alongside the per-Run log files. What `acron status` and `acron logs` read.

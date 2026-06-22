@@ -32,6 +32,8 @@ func TestValidate(t *testing.T) {
 		{"missing cwd", func(j *Job) { j.Cwd = "" }, true},
 		{"nonexistent cwd", func(j *Job) { j.Cwd = dir + "/nope" }, true},
 		{"bad timeout", func(j *Job) { j.Timeout = "soon" }, true},
+		{"valid condition", func(j *Job) { j.Condition = []string{"sh", "-c", "true"} }, false},
+		{"empty condition command", func(j *Job) { j.Condition = []string{""} }, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

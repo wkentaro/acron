@@ -25,7 +25,7 @@ func TestRenderStatusTable(t *testing.T) {
 			t.Errorf("line %d has trailing whitespace: %q", i, line)
 		}
 	}
-	for _, header := range []string{"JOB", "APPLY", "LAST RUN", "WHEN", "NEXT"} {
+	for _, header := range []string{"JOB", "APPLY", "STATUS", "LAST", "NEXT"} {
 		if !strings.Contains(lines[0], header) {
 			t.Errorf("header row %q missing column %q", lines[0], header)
 		}

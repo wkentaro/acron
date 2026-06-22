@@ -27,6 +27,8 @@ Roadmap for the work remaining after the macOS (launchd) runtime. See
 
 - [x] Support lists, ranges, and steps (`*/15`, `1,2,3`, `9-17`): enumerate into
       multiple launchd `StartCalendarInterval` dicts; map to `OnCalendar`.
+- [x] POSIX OR for combined day-of-month + day-of-week: emit two launchd match
+      dicts / two `OnCalendar` lines so either matches.
 
 ### Commands
 

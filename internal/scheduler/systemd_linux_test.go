@@ -41,13 +41,26 @@ func TestRenderService(t *testing.T) {
 }
 
 func TestRenderTimer(t *testing.T) {
-	out := renderTimer("nightly-triage", "*-*-* 02:00:00")
+	out := renderTimer("nightly-triage", []string{"*-*-* 02:00:00"})
 
 	for _, want := range []string{
 		"[Timer]",
 		"OnCalendar=*-*-* 02:00:00",
 		"Persistent=true",
 		"WantedBy=timers.target",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("timer missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderTimerUnionsMultipleOnCalendar(t *testing.T) {
+	out := renderTimer("weekly-or-monthly", []string{"*-*-15 09:00:00", "Mon *-*-* 09:00:00"})
+
+	for _, want := range []string{
+		"OnCalendar=*-*-15 09:00:00",
+		"OnCalendar=Mon *-*-* 09:00:00",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("timer missing %q\n---\n%s", want, out)

@@ -66,6 +66,26 @@ func TestToLaunchdExpands(t *testing.T) {
 			{Minute: ptr(0), Hour: ptr(10)},
 			{Minute: ptr(30), Hour: ptr(10)},
 		}},
+		// POSIX OR: both day-of-month and day-of-week restricted yields two
+		// match points, one by day (weekday omitted) and one by weekday (day
+		// omitted).
+		{"0 9 15 * 1", []CalendarInterval{
+			{Minute: ptr(0), Hour: ptr(9), Day: ptr(15)},
+			{Minute: ptr(0), Hour: ptr(9), Weekday: ptr(1)},
+		}},
+		// A restricted month applies to both OR arms.
+		{"0 9 15 6 1", []CalendarInterval{
+			{Minute: ptr(0), Hour: ptr(9), Day: ptr(15), Month: ptr(6)},
+			{Minute: ptr(0), Hour: ptr(9), Weekday: ptr(1), Month: ptr(6)},
+		}},
+		// Multi-valued OR: each arm expands its own field, the day arm by day
+		// and the weekday arm by weekday.
+		{"0 9 1,15 * 1,3", []CalendarInterval{
+			{Minute: ptr(0), Hour: ptr(9), Day: ptr(1)},
+			{Minute: ptr(0), Hour: ptr(9), Day: ptr(15)},
+			{Minute: ptr(0), Hour: ptr(9), Weekday: ptr(1)},
+			{Minute: ptr(0), Hour: ptr(9), Weekday: ptr(3)},
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
@@ -98,18 +118,26 @@ func TestToLaunchdRejectsExplosion(t *testing.T) {
 func TestToSystemd(t *testing.T) {
 	tests := []struct {
 		expr string
-		want string
+		want []string
 	}{
-		{"0 2 * * *", "*-*-* 02:00:00"},
-		{"30 14 1 6 *", "*-06-01 14:30:00"},
-		{"0 9 * * 1", "Mon *-*-* 09:00:00"},
-		{"0 0 * * 0", "Sun *-*-* 00:00:00"},
-		{"* * * * *", "*-*-* *:*:00"},
-		{"* 2 * * *", "*-*-* 02:*:00"},
-		{"*/15 * * * *", "*-*-* *:00,15,30,45:00"},
-		{"0 0,12 * * *", "*-*-* 00,12:00:00"},
-		{"0 9 * * 1-5", "Mon,Tue,Wed,Thu,Fri *-*-* 09:00:00"},
-		{"0 9-12 * * *", "*-*-* 09,10,11,12:00:00"},
+		{"0 2 * * *", []string{"*-*-* 02:00:00"}},
+		{"30 14 1 6 *", []string{"*-06-01 14:30:00"}},
+		{"0 9 * * 1", []string{"Mon *-*-* 09:00:00"}},
+		{"0 0 * * 0", []string{"Sun *-*-* 00:00:00"}},
+		{"* * * * *", []string{"*-*-* *:*:00"}},
+		{"* 2 * * *", []string{"*-*-* 02:*:00"}},
+		{"*/15 * * * *", []string{"*-*-* *:00,15,30,45:00"}},
+		{"0 0,12 * * *", []string{"*-*-* 00,12:00:00"}},
+		{"0 9 * * 1-5", []string{"Mon,Tue,Wed,Thu,Fri *-*-* 09:00:00"}},
+		{"0 9-12 * * *", []string{"*-*-* 09,10,11,12:00:00"}},
+		// POSIX OR: both day-of-month and day-of-week restricted yields two
+		// lines (date-only and weekday-only); systemd unions them.
+		{"0 9 15 * 1", []string{"*-*-15 09:00:00", "Mon *-*-* 09:00:00"}},
+		// A restricted month applies to both OR lines.
+		{"0 9 15 6 1", []string{"*-06-15 09:00:00", "Mon *-06-* 09:00:00"}},
+		// Multi-valued OR: each arm renders its own comma list, the day arm by
+		// day and the weekday arm by weekday.
+		{"0 9 1,15 * 1,3", []string{"*-*-01,15 09:00:00", "Mon,Wed *-*-* 09:00:00"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
@@ -117,8 +145,13 @@ func TestToSystemd(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ToSystemd(%q): %v", tt.expr, err)
 			}
-			if got != tt.want {
-				t.Errorf("ToSystemd(%q) = %q, want %q", tt.expr, got, tt.want)
+			if len(got) != len(tt.want) {
+				t.Fatalf("ToSystemd(%q): got %d lines, want %d", tt.expr, len(got), len(tt.want))
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("ToSystemd(%q)[%d] = %q, want %q", tt.expr, i, got[i], tt.want[i])
+				}
 			}
 		})
 	}
@@ -168,6 +201,5 @@ func rejectCases() []string {
 		"*/0 * * * *",   // zero step
 		"17-9 * * * *",  // descending range
 		"60-70 2 * * *", // range out of bounds
-		"0 9 15 * 1",    // both day-of-month and day-of-week set (POSIX OR, unsupported)
 	}
 }

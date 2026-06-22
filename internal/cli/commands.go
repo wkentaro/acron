@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/table"
 	"github.com/spf13/cobra"
 	"github.com/wkentaro/acron/internal/config"
 	"github.com/wkentaro/acron/internal/paths"
@@ -184,26 +185,47 @@ func runStatus() error {
 		fmt.Printf("No jobs in %s\n", config.DefaultPath())
 		return nil
 	}
-	rows := make([]row, 0, len(states))
+	t := statusTable()
 	for _, st := range states {
-		lastRun, err := renderLastRun(st.Name)
+		status, when, err := renderLastRun(st.Name)
 		if err != nil {
 			return err
 		}
-		rows = append(rows, row{
-			left:  cmdStyle.Render(st.Name),
-			right: renderApplyState(st.State) + "  " + lastRun,
-		})
+		t.Row(cmdStyle.Render(st.Name), renderApplyState(st.State), status, when)
 	}
-	var b strings.Builder
-	section(&b, "Status:", rows)
-	fmt.Print(b.String())
+	fmt.Print(renderStatusTable(t))
 	return nil
 }
 
+func renderStatusTable(t *table.Table) string {
+	var b strings.Builder
+	for _, line := range strings.Split(strings.TrimRight(t.Render(), "\n"), "\n") {
+		fmt.Fprintln(&b, strings.TrimRight(line, " "))
+	}
+	return b.String()
+}
+
+func statusTable() *table.Table {
+	headers := []string{
+		commentStyle.Render("JOB"),
+		commentStyle.Render("APPLY"),
+		commentStyle.Render("LAST RUN"),
+		commentStyle.Render("WHEN"),
+	}
+	return table.New().
+		BorderTop(false).BorderBottom(false).BorderLeft(false).
+		BorderRight(false).BorderColumn(false).BorderHeader(false).
+		Headers(headers...).
+		StyleFunc(func(_, col int) lipgloss.Style {
+			if col < len(headers)-1 {
+				return lipgloss.NewStyle().PaddingRight(2)
+			}
+			return lipgloss.NewStyle()
+		})
+}
+
 func renderApplyState(state scheduler.ApplyState) string {
-	const width = 9 // len("unapplied"), the widest state label
-	return applyStateStyle(state).Width(width).Render(string(state))
+	return applyStateStyle(state).Render(string(state))
 }
 
 func applyStateStyle(state scheduler.ApplyState) lipgloss.Style {
@@ -217,15 +239,15 @@ func applyStateStyle(state scheduler.ApplyState) lipgloss.Style {
 	}
 }
 
-func renderLastRun(job string) (string, error) {
+func renderLastRun(job string) (status, when string, err error) {
 	rec, ok, err := runner.LastRecord(job)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if !ok {
-		return commentStyle.Render("never run"), nil
+		return commentStyle.Render("never run"), "", nil
 	}
-	return renderStatus(rec.Status, rec.Reason) + "  " + commentStyle.Render(formatWhen(rec.Start)), nil
+	return renderStatus(rec.Status, rec.Reason), commentStyle.Render(formatWhen(rec.Start)), nil
 }
 
 func runLogs(job, selector string) error {

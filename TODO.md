@@ -35,11 +35,11 @@ Roadmap for the work remaining after the macOS (launchd) runtime. See
 
 ### Conditions
 
-- [ ] `condition`: optional per-Job precondition command run in the wrapper before
+- [x] `condition`: optional per-Job precondition command run in the wrapper before
       the agent (lock → condition → agent). Mirror systemd `ExecCondition=`: exit
       `0` proceeds, `1`-`254` records a `skipped` Run (`reason: condition`), `255`/
-      signal is a `failure`. Add a `reason` field to `history.jsonl` (backfill
-      overlap to `reason: overlap`); skip caps independent from real Runs (50 each).
+      signal is a `failure`. Add a `reason` field to `history.jsonl` (overlap
+      skips now carry `reason: overlap`); skip caps independent from real Runs (50 each).
       Inherit `cwd`/`env`, no `{prompt}` substitution, bound by the Job `timeout`.
       See ADR-0010.
 

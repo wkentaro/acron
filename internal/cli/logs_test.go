@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,21 +49,8 @@ func seedRuns(t *testing.T, job string, records []runner.Record) {
 
 func captureStdout(t *testing.T, fn func() error) (string, error) {
 	t.Helper()
-	original := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stdout = w
-	t.Cleanup(func() { os.Stdout = original })
-	runErr := fn()
-	_ = w.Close()
-	os.Stdout = original
-	out, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(out), runErr
+	out, _, err := captureOutErr(t, fn)
+	return out, err
 }
 
 func makeThreeRuns() []runner.Record {

@@ -55,6 +55,8 @@ on it" actually work without which `trigger` fires into a void.
   (`success`/`failure`/`timeout`/`skipped`) preserves the append-only,
   end-written history model (ADR-0007); a start-then-rewrite record would break
   it. `logs --follow` (tailing the live log) is a separate, deferred feature.
+  (Since shipped in ADR-0013, which also moves the in-flight log's identity from
+  the log filename into the lock file's contents.)
 
 ## Consequences
 

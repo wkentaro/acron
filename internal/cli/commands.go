@@ -9,7 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
+	"sort"
 	"strings"
 	"time"
 
@@ -145,7 +145,6 @@ func newLogsCmd() *cobra.Command {
 		Example: `
 acron logs nightly-triage                       # Newest run (same as "latest")
 acron logs nightly-triage latest                # Newest run explicitly
-acron logs nightly-triage 3                     # The 3rd most recent run (see acron history)
 acron logs nightly-triage "2026-06-22 02:00:00" # A specific run by its displayed timestamp
 acron logs nightly-triage --follow              # Stream the run in progress until it finishes
 `,
@@ -165,23 +164,28 @@ acron logs nightly-triage --follow              # Stream the run in progress unt
 }
 
 func newHistoryCmd() *cobra.Command {
-	return &cobra.Command{
+	var limit int
+	cmd := &cobra.Command{
 		Use:               "history [job]",
-		Short:             "List past runs",
+		Short:             "List past runs, newest first",
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeJobNames,
 		Example: `
-acron history                 # All jobs
-acron history nightly-triage  # One job
+acron history                 # 20 most recent runs across all jobs
+acron history nightly-triage  # 20 most recent runs of one job
+acron history --limit 100     # Show more
+acron history --limit 0       # Show all
 `,
 		RunE: func(_ *cobra.Command, args []string) error {
 			name := ""
 			if len(args) == 1 {
 				name = args[0]
 			}
-			return runHistory(name)
+			return runHistory(name, limit)
 		},
 	}
+	cmd.Flags().IntVar(&limit, "limit", 20, "Number of most recent runs to show (0 for all)")
+	return cmd
 }
 
 func newConfigCmd() *cobra.Command {
@@ -334,7 +338,7 @@ func runStatus() error {
 		next, left := renderNext(jobs[st.Name], st.State, now)
 		t.Row(cmdStyle.Render(st.Name), renderApplyState(st.State), status, last, passed, next, left)
 	}
-	fmt.Print(renderStatusTable(t))
+	fmt.Print(renderTable(t))
 	return nil
 }
 
@@ -391,7 +395,7 @@ func renderNext(job config.Job, state scheduler.ApplyState, now time.Time) (next
 		commentStyle.Render(formatDuration(fire.Sub(now)))
 }
 
-func renderStatusTable(t *table.Table) string {
+func renderTable(t *table.Table) string {
 	var b strings.Builder
 	for _, line := range strings.Split(strings.TrimRight(t.Render(), "\n"), "\n") {
 		fmt.Fprintln(&b, strings.TrimRight(line, " "))
@@ -399,26 +403,31 @@ func renderStatusTable(t *table.Table) string {
 	return b.String()
 }
 
-func statusTable() *table.Table {
-	headers := []string{
-		commentStyle.Render("JOB"),
-		commentStyle.Render("APPLY"),
-		commentStyle.Render("STATUS"),
-		commentStyle.Render("LAST"),
-		commentStyle.Render("PASSED"),
-		commentStyle.Render("NEXT"),
-		commentStyle.Render("LEFT"),
+// newTable builds the borderless, left-aligned table shared by `status` and
+// `history`: dim headers, every column but the last padded two spaces right.
+func newTable(headers ...string) *table.Table {
+	styled := make([]string, len(headers))
+	for i, h := range headers {
+		styled[i] = commentStyle.Render(h)
 	}
 	return table.New().
 		BorderTop(false).BorderBottom(false).BorderLeft(false).
 		BorderRight(false).BorderColumn(false).BorderHeader(false).
-		Headers(headers...).
+		Headers(styled...).
 		StyleFunc(func(_, col int) lipgloss.Style {
 			if col < len(headers)-1 {
 				return lipgloss.NewStyle().PaddingRight(2)
 			}
 			return lipgloss.NewStyle()
 		})
+}
+
+func statusTable() *table.Table {
+	return newTable("JOB", "APPLY", "STATUS", "LAST", "PASSED", "NEXT", "LEFT")
+}
+
+func historyTable() *table.Table {
+	return newTable("JOB", "WHEN", "PASSED", "STATUS", "DURATION")
 }
 
 func renderApplyState(state scheduler.ApplyState) string {
@@ -474,11 +483,24 @@ func runLogs(job, selector string) error {
 	if err := requireJob(job); err != nil {
 		return err
 	}
-	name, err := resolveLog(job, selector)
+	rec, err := resolveLog(job, selector)
 	if err != nil {
 		return err
 	}
-	return copyLog(job, name)
+	fmt.Fprintln(os.Stderr, renderLogSummary(job, rec))
+	return copyLog(job, rec.Log)
+}
+
+// renderLogSummary orients the reader with a one-line header before the log
+// body: job, the run's displayed timestamp, its status, and how long it ran. It
+// goes to stderr (like the --follow footer) so stdout stays the pure log payload.
+func renderLogSummary(job string, rec runner.Record) string {
+	return strings.Join([]string{
+		cmdStyle.Render(job),
+		commentStyle.Render(formatWhen(rec.Start)),
+		renderStatus(rec.Status, rec.Reason),
+		commentStyle.Render("in " + formatDuration(recDuration(rec))),
+	}, "  ")
 }
 
 func copyLog(job, logName string) error {
@@ -615,10 +637,15 @@ func followFooter(rec runner.Record) string {
 	if rec.Status == runner.StatusSkipped {
 		return msg
 	}
-	return msg + " in " + (time.Duration(rec.DurationS) * time.Second).String()
+	return msg + " in " + formatDuration(recDuration(rec))
 }
 
-func runHistory(name string) error {
+// runHistory renders past Runs as one interleaved, newest-first table. With no
+// job it spans every job (the JOB column repeats); with a job it filters to that
+// one (the column stays, so the filtered view is the same table with rows
+// removed). limit caps the rows to the most recent N across the selection; 0
+// shows all. Skipped Runs appear like any other outcome.
+func runHistory(name string, limit int) error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
@@ -634,30 +661,50 @@ func runHistory(name string) error {
 		}
 		jobs = []config.Job{job}
 	}
-
 	if len(jobs) == 0 {
 		printNoJobs()
 		return nil
 	}
 
-	allRecords := make([][]runner.Record, len(jobs))
-	indexWidth := 1
-	for i, job := range jobs {
+	type jobRun struct {
+		job   string
+		rec   runner.Record
+		start time.Time
+	}
+	var runs []jobRun
+	for _, job := range jobs {
 		records, err := runner.History(job.Name)
 		if err != nil {
 			return err
 		}
-		allRecords[i] = records
-		if w := len(strconv.Itoa(len(records))); w > indexWidth {
-			indexWidth = w
+		for _, rec := range records {
+			start, _ := time.Parse(time.RFC3339, rec.Start)
+			runs = append(runs, jobRun{job: job.Name, rec: rec, start: start})
 		}
 	}
-
-	sections := make([]string, len(jobs))
-	for i, job := range jobs {
-		sections[i] = renderJobHistory(job.Name, allRecords[i], indexWidth)
+	if len(runs) == 0 {
+		if name == "" {
+			fmt.Println("No runs yet.")
+		} else {
+			fmt.Printf("No runs for %q yet.\n", name)
+		}
+		return nil
 	}
-	fmt.Print(strings.Join(sections, "\n"))
+
+	sort.SliceStable(runs, func(i, j int) bool {
+		return runs[i].start.After(runs[j].start)
+	})
+	if limit > 0 && len(runs) > limit {
+		runs = runs[:limit]
+	}
+
+	now := time.Now()
+	t := historyTable()
+	for _, run := range runs {
+		when, passed := renderRunWhen(run.rec, run.start, now)
+		t.Row(cmdStyle.Render(run.job), when, passed, renderStatus(run.rec.Status, run.rec.Reason), renderRunDuration(run.rec))
+	}
+	fmt.Print(renderTable(t))
 	return nil
 }
 
@@ -665,67 +712,59 @@ func printNoJobs() {
 	fmt.Printf("No jobs in %s\n", config.DefaultPath())
 }
 
-func renderJobHistory(jobName string, records []runner.Record, indexWidth int) string {
-	var b strings.Builder
-	if len(records) == 0 {
-		section(&b, cmdStyle.Render(jobName), []row{{left: commentStyle.Render("never run")}})
-		return b.String()
+// renderRunWhen produces the WHEN and PASSED cells from a Run's start: the
+// displayed timestamp (the logs selector) and the elapsed-since "ago", which is
+// blank when the start did not parse.
+func renderRunWhen(rec runner.Record, start, now time.Time) (when, passed string) {
+	when = commentStyle.Render(formatWhen(rec.Start))
+	if start.IsZero() {
+		return when, ""
 	}
-	rows := make([]row, 0, len(records))
-	for i := len(records) - 1; i >= 0; i-- {
-		rec := records[i]
-		label := formatWhen(rec.Start)
-		index := commentStyle.Render(fmt.Sprintf("%*d", indexWidth, len(records)-i))
-		rows = append(rows, row{
-			left:  index + "  " + argStyle.Render(label),
-			right: renderStatus(rec.Status, rec.Reason),
-		})
-	}
-	section(&b, cmdStyle.Render(jobName), rows)
-	return b.String()
+	return when, renderPassed(now.Sub(start))
 }
 
-func resolveLog(job, selector string) (string, error) {
+func recDuration(rec runner.Record) time.Duration {
+	return time.Duration(rec.DurationS) * time.Second
+}
+
+func renderRunDuration(rec runner.Record) string {
+	if rec.Status == runner.StatusSkipped {
+		return commentStyle.Render("—")
+	}
+	return commentStyle.Render(formatDuration(recDuration(rec)))
+}
+
+// resolveLog picks the Run whose output `logs` should show: the newest Run with
+// output (no selector or "latest"), or the Run at a displayed timestamp. A Run
+// is addressed by its fired time, never a positional index, so the timestamp the
+// table prints round-trips back here as the selector.
+func resolveLog(job, selector string) (runner.Record, error) {
 	records, err := runner.History(job)
 	if err != nil {
-		return "", err
+		return runner.Record{}, err
 	}
 	if len(records) == 0 {
-		return "", fmt.Errorf("no runs for job %q", job)
+		return runner.Record{}, fmt.Errorf("no runs for job %q", job)
 	}
 	if selector == "" || selector == "latest" {
 		return latestLog(job, records)
 	}
-	if index, err := strconv.Atoi(selector); err == nil {
-		return logByIndex(job, records, index)
-	}
 	return logByTimestamp(job, selector, records)
 }
 
-func latestLog(job string, records []runner.Record) (string, error) {
+func latestLog(job string, records []runner.Record) (runner.Record, error) {
 	for i := len(records) - 1; i >= 0; i-- {
 		if records[i].Log != "" {
-			return records[i].Log, nil
+			return records[i], nil
 		}
 	}
-	return "", fmt.Errorf("no captured output for job %q", job)
+	return runner.Record{}, fmt.Errorf("no captured output for job %q", job)
 }
 
-func logByIndex(job string, records []runner.Record, index int) (string, error) {
-	if index < 1 || index > len(records) {
-		return "", fmt.Errorf("no run %d for job %q (have %d)", index, job, len(records))
-	}
-	rec := records[len(records)-index]
-	if rec.Log == "" {
-		return "", fmt.Errorf("run %d of job %q was skipped (%s); no output", index, job, rec.Reason)
-	}
-	return rec.Log, nil
-}
-
-func logByTimestamp(job, timestamp string, records []runner.Record) (string, error) {
+func logByTimestamp(job, timestamp string, records []runner.Record) (runner.Record, error) {
 	want, ok := parseSelectorTime(timestamp)
 	if !ok {
-		return "", fmt.Errorf("unrecognized timestamp %q for job %q (want %q)", timestamp, job, displayTimeFormat)
+		return runner.Record{}, fmt.Errorf("unrecognized timestamp %q for job %q (want %q)", timestamp, job, displayTimeFormat)
 	}
 	for _, rec := range records {
 		start, err := time.Parse(time.RFC3339, rec.Start)
@@ -733,11 +772,11 @@ func logByTimestamp(job, timestamp string, records []runner.Record) (string, err
 			continue
 		}
 		if rec.Log == "" {
-			return "", fmt.Errorf("run at %q of job %q was skipped (%s); no output", timestamp, job, rec.Reason)
+			return runner.Record{}, fmt.Errorf("run at %q of job %q was skipped (%s); no output", timestamp, job, rec.Reason)
 		}
-		return rec.Log, nil
+		return rec, nil
 	}
-	return "", fmt.Errorf("no run %q for job %q", timestamp, job)
+	return runner.Record{}, fmt.Errorf("no run %q for job %q", timestamp, job)
 }
 
 // parseSelectorTime reads a timestamp selector in either the human-readable

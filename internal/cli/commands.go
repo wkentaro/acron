@@ -36,7 +36,7 @@ func completeJobNames(_ *cobra.Command, args []string, _ string) ([]string, cobr
 	}
 	names := make([]string, 0, len(cfg.Jobs))
 	for _, job := range cfg.Jobs {
-		names = append(names, job.Name+"\t"+job.Schedule)
+		names = append(names, job.Name)
 	}
 	return names, cobra.ShellCompDirectiveNoFileComp
 }

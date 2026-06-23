@@ -287,11 +287,12 @@ func runStatus() error {
 	now := time.Now()
 	t := statusTable()
 	for _, st := range states {
-		status, when, err := renderLastRun(st.Name)
+		status, last, passed, err := renderLastRun(st.Name, now)
 		if err != nil {
 			return err
 		}
-		t.Row(cmdStyle.Render(st.Name), renderApplyState(st.State), status, when, renderNext(jobs[st.Name], st.State, now))
+		next, left := renderNext(jobs[st.Name], st.State, now)
+		t.Row(cmdStyle.Render(st.Name), renderApplyState(st.State), status, last, passed, next, left)
 	}
 	fmt.Print(renderStatusTable(t))
 	return nil
@@ -333,16 +334,20 @@ func renderUnit(unit scheduler.UnitFile) string {
 // orphaned, unapplied, and disabled jobs would each show a time that does not
 // match reality, so they render a placeholder instead. Orphaned jobs have no
 // config entry, so the caller passes a zero Job; the non-applied guard returns
-// the placeholder before its empty schedule is ever read.
-func renderNext(job config.Job, state scheduler.ApplyState, now time.Time) string {
+// the placeholder before its empty schedule is ever read. The LEFT cell (time
+// until that fire, no suffix) is derived from the same next-fire time so the two
+// always agree, and mirrors NEXT's placeholder when there is no computable fire.
+func renderNext(job config.Job, state scheduler.ApplyState, now time.Time) (next, left string) {
+	placeholder := commentStyle.Render("—")
 	if state != scheduler.StateApplied {
-		return commentStyle.Render("—")
+		return placeholder, placeholder
 	}
-	next, err := job.NextFire(now)
-	if err != nil || next.IsZero() {
-		return commentStyle.Render("—")
+	fire, err := job.NextFire(now)
+	if err != nil || fire.IsZero() {
+		return placeholder, placeholder
 	}
-	return commentStyle.Render(next.Local().Format(displayTimeFormat))
+	return commentStyle.Render(fire.Local().Format(displayTimeFormat)),
+		commentStyle.Render(formatDuration(fire.Sub(now)))
 }
 
 func renderStatusTable(t *table.Table) string {
@@ -359,7 +364,9 @@ func statusTable() *table.Table {
 		commentStyle.Render("APPLY"),
 		commentStyle.Render("STATUS"),
 		commentStyle.Render("LAST"),
+		commentStyle.Render("PASSED"),
 		commentStyle.Render("NEXT"),
+		commentStyle.Render("LEFT"),
 	}
 	return table.New().
 		BorderTop(false).BorderBottom(false).BorderLeft(false).
@@ -388,22 +395,38 @@ func applyStateStyle(state scheduler.ApplyState) lipgloss.Style {
 	}
 }
 
-func renderLastRun(job string) (status, when string, err error) {
+// renderLastRun produces the STATUS, LAST, and PASSED cells for a job. On the
+// normal path PASSED (elapsed since the run start, with an "ago" suffix) is
+// derived from the same parsed timestamp as LAST, and is blank when LAST has no
+// time to show: a never-run job, or an in-flight run still in its Condition
+// check (unknown start). A running job's PASSED doubles as how long it has been
+// running.
+func renderLastRun(job string, now time.Time) (status, last, passed string, err error) {
 	if since, ok := runner.RunningSince(job); ok {
 		status = runningStyle.Render("running")
 		if !since.IsZero() {
-			when = commentStyle.Render(since.Format(displayTimeFormat))
+			last = commentStyle.Render(since.Local().Format(displayTimeFormat))
+			passed = renderPassed(now.Sub(since))
 		}
-		return status, when, nil
+		return status, last, passed, nil
 	}
 	rec, ok, err := runner.LastRecord(job)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if !ok {
-		return commentStyle.Render("never run"), "", nil
+		return commentStyle.Render("never run"), "", "", nil
 	}
-	return renderStatus(rec.Status, rec.Reason), commentStyle.Render(formatWhen(rec.Start)), nil
+	status = renderStatus(rec.Status, rec.Reason)
+	start, parseErr := time.Parse(time.RFC3339, rec.Start)
+	if parseErr != nil {
+		return status, commentStyle.Render(rec.Start), "", nil
+	}
+	return status, commentStyle.Render(start.Local().Format(displayTimeFormat)), renderPassed(now.Sub(start)), nil
+}
+
+func renderPassed(d time.Duration) string {
+	return commentStyle.Render(formatDuration(d) + " ago")
 }
 
 func runLogs(job, selector string) error {

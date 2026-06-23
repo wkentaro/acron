@@ -4,6 +4,7 @@ import (
 	"os"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/wkentaro/acron/internal/paths"
 )
@@ -68,6 +69,11 @@ func TestRunningSinceReadsInflightLog(t *testing.T) {
 	}
 	if got := start.Format("2006-01-02 15:04"); got != "2026-06-22 14:03" {
 		t.Errorf("start = %q, want %q", got, "2026-06-22 14:03")
+	}
+	// The name is stamped in local time, so the parsed instant must be local,
+	// not UTC: an elapsed-time computation against time.Now() depends on it.
+	if want := time.Date(2026, 6, 22, 14, 3, 0, 0, time.Local); !start.Equal(want) {
+		t.Errorf("start instant = %v, want %v (parsed in local time)", start, want)
 	}
 }
 

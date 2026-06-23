@@ -85,10 +85,10 @@ func Run(job config.Job) (Result, error) {
 		return result, err
 	}
 
-	return runAgent(job, timeout)
+	return runAgent(job, timeout, lock)
 }
 
-func runAgent(job config.Job, timeout time.Duration) (Result, error) {
+func runAgent(job config.Job, timeout time.Duration, lock *os.File) (Result, error) {
 	runsDir := paths.RunsDir(job.Name)
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
 		return Result{}, err
@@ -101,6 +101,7 @@ func runAgent(job config.Job, timeout time.Duration) (Result, error) {
 		return Result{}, err
 	}
 	defer func() { _ = logFile.Close() }()
+	recordLiveLog(lock, logName)
 
 	exit, status := execAgent(job, timeout, io.MultiWriter(logFile, os.Stdout))
 	return finishRun(job.Name, start, status, ReasonNone, exit, logName)
@@ -268,10 +269,39 @@ func acquireLock(job string) (*os.File, bool, error) {
 		}
 		return nil, false, err
 	}
+	// Clear any name a previous Run left if it crashed without releasing
+	// (releaseLock clears it on the normal path), so an empty held lock always
+	// means this Run's Condition check, never a stale name.
+	_ = file.Truncate(0)
 	return file, true, nil
 }
 
+// recordLiveLog stamps the in-flight Run's log file name into the held lock
+// file, so a follower can read which log the agent is currently streaming to.
+// The lock file is empty during the Condition check (acquireLock cleared it);
+// awaitLiveLog treats that empty-while-held state as "agent not started yet".
+// Log names are fixed-length, so this single WriteAt overwrites the cleared
+// file with the full name in one operation, never a partial name. Best-effort:
+// the stamp is advisory, so a write error must not fail the Run it guards.
+func recordLiveLog(lock *os.File, logName string) {
+	_, _ = lock.WriteAt([]byte(logName), 0)
+}
+
+// liveLogName reads the in-flight Run's log file name from the Job's lock file,
+// or "" if no name is stamped (no Run, or a Run still in its Condition check).
+func liveLogName(job string) string {
+	data, err := os.ReadFile(paths.LockPath(job))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
 func releaseLock(file *os.File) {
+	// Clear the stamped log name while still holding the lock, so the gap
+	// between the next Run's lock-acquire and its Condition check never exposes
+	// this finished Run's name to a follower.
+	_ = file.Truncate(0)
 	_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 	_ = file.Close()
 }
@@ -295,35 +325,29 @@ func IsRunning(job string) bool {
 	return false
 }
 
-// RunningSince reports whether a Run is in flight for the Job and, when known,
-// when it started. The start time is read from the in-flight Run's log file,
-// which has no history Record yet; it is unknown (zero) during an earlier
-// Condition check, before the agent's log exists.
-func RunningSince(job string) (time.Time, bool) {
+// InFlight reports whether a Run holds the Job's lock and, while the agent is
+// streaming, the name of the log file it is writing to. The name is empty
+// during an earlier Condition check, before the agent's log exists.
+func InFlight(job string) (logName string, running bool) {
 	if !IsRunning(job) {
+		return "", false
+	}
+	return liveLogName(job), true
+}
+
+// RunningSince reports whether a Run is in flight for the Job and, when known,
+// when it started. The start time is parsed from the in-flight Run's log file
+// name; it is unknown (zero) during an earlier Condition check, before the
+// agent's log exists.
+func RunningSince(job string) (time.Time, bool) {
+	logName, running := InFlight(job)
+	if !running {
 		return time.Time{}, false
 	}
-	recorded := map[string]bool{}
-	if records, err := History(job); err == nil {
-		for _, rec := range records {
-			recorded[rec.Log] = true
-		}
-	}
-	entries, err := os.ReadDir(paths.RunsDir(job))
-	if err != nil {
+	if logName == "" {
 		return time.Time{}, true
 	}
-	newest := ""
-	for _, entry := range entries {
-		name := entry.Name()
-		if strings.HasSuffix(name, ".log") && !recorded[name] && name > newest {
-			newest = name
-		}
-	}
-	if newest == "" {
-		return time.Time{}, true
-	}
-	start, err := time.Parse(LogTimestampLayout, strings.TrimSuffix(newest, ".log"))
+	start, err := time.Parse(LogTimestampLayout, strings.TrimSuffix(logName, ".log"))
 	if err != nil {
 		return time.Time{}, true
 	}

@@ -8,6 +8,10 @@ import (
 
 const diffContext = 3
 
+// noNewlineMarker is git's annotation for a side whose final line is not
+// newline-terminated; it follows that line and is not counted in the @@ ranges.
+const noNewlineMarker = `\ No newline at end of file`
+
 type diffKind int
 
 const (
@@ -16,9 +20,17 @@ const (
 	diffInsert
 )
 
+// line is one unit-file line plus whether it was newline-terminated. Tracking
+// termination lets the renderers surface a trailing-newline-only drift the way
+// git does, instead of normalizing it away before the diff.
+type line struct {
+	text       string
+	hasNewline bool
+}
+
 type diffOp struct {
 	kind diffKind
-	line string
+	line line
 }
 
 // renderUnitDiff renders the delta from installed to desired as a git-style
@@ -119,13 +131,16 @@ func writeLines(b *strings.Builder, ops []diffOp, h hunk) (oldCount, newCount in
 		case diffEqual:
 			oldCount++
 			newCount++
-			fmt.Fprintf(b, " %s\n", op.line)
+			fmt.Fprintf(b, " %s\n", op.line.text)
 		case diffDelete:
 			oldCount++
-			b.WriteString(removeStyle.Render("-"+op.line) + "\n")
+			b.WriteString(removeStyle.Render("-"+op.line.text) + "\n")
 		case diffInsert:
 			newCount++
-			b.WriteString(addStyle.Render("+"+op.line) + "\n")
+			b.WriteString(addStyle.Render("+"+op.line.text) + "\n")
+		}
+		if !op.line.hasNewline {
+			b.WriteString(commentStyle.Render(noNewlineMarker) + "\n")
 		}
 	}
 	return oldCount, newCount
@@ -162,16 +177,30 @@ func hunkRange(start, count int) string {
 	return fmt.Sprintf("%d,%d", start, count)
 }
 
-func splitLines(text string) []string {
+// splitLines splits text into lines, tracking newline termination so a
+// trailing-newline difference survives into the diff. A final "\n" terminates
+// the last line (and is not itself a line); its absence marks the last line as
+// unterminated. Lines compare unequal when they differ in either text or
+// termination, so git's "\ No newline at end of file" delta is preserved.
+func splitLines(text string) []line {
 	if text == "" {
 		return nil
 	}
-	return strings.Split(strings.TrimRight(text, "\n"), "\n")
+	hasFinalNewline := strings.HasSuffix(text, "\n")
+	parts := strings.Split(text, "\n")
+	if hasFinalNewline {
+		parts = parts[:len(parts)-1]
+	}
+	lines := make([]line, len(parts))
+	for i, p := range parts {
+		lines[i] = line{text: p, hasNewline: i < len(parts)-1 || hasFinalNewline}
+	}
+	return lines
 }
 
 // diffLines is a longest-common-subsequence line diff: shared lines are equal,
 // lines only in before are deletions, lines only in after are insertions.
-func diffLines(before, after []string) []diffOp {
+func diffLines(before, after []line) []diffOp {
 	lcs := lcsTable(before, after)
 	var ops []diffOp
 	i, j := 0, 0
@@ -198,7 +227,7 @@ func diffLines(before, after []string) []diffOp {
 	return ops
 }
 
-func lcsTable(before, after []string) [][]int {
+func lcsTable(before, after []line) [][]int {
 	lcs := make([][]int, len(before)+1)
 	for i := range lcs {
 		lcs[i] = make([]int, len(after)+1)

@@ -112,6 +112,101 @@ func TestRenderUnitDiffSplitsDistantChangesIntoHunks(t *testing.T) {
 	}
 }
 
+func TestRenderUnitDiffMarksMissingFinalNewline(t *testing.T) {
+	// Desired drops the final newline the installed side has; git marks the new
+	// side with "\ No newline at end of file" after the changed line.
+	out := renderUnitDiff("acron-x.service", "only\n", "only")
+
+	want := "--- a/acron-x.service\n" +
+		"+++ b/acron-x.service\n" +
+		"@@ -1 +1 @@\n" +
+		"-only\n" +
+		"+only\n" +
+		"\\ No newline at end of file\n"
+	if out != want {
+		t.Errorf("renderUnitDiff =\n%q\nwant\n%q", out, want)
+	}
+}
+
+func TestRenderUnitDiffMarksGainedFinalNewline(t *testing.T) {
+	// Installed lacks the final newline desired adds; the marker follows the old
+	// side's line, before the added line.
+	out := renderUnitDiff("u", "only", "only\n")
+
+	want := "--- a/u\n" +
+		"+++ b/u\n" +
+		"@@ -1 +1 @@\n" +
+		"-only\n" +
+		"\\ No newline at end of file\n" +
+		"+only\n"
+	if out != want {
+		t.Errorf("renderUnitDiff =\n%q\nwant\n%q", out, want)
+	}
+}
+
+func TestRenderUnitDiffSurfacesExtraTrailingNewline(t *testing.T) {
+	// Installed has an extra trailing newline (a blank last line); both sides
+	// stay newline-terminated, so the delta is a deleted empty line, no marker.
+	out := renderUnitDiff("u", "x\n\n", "x\n")
+
+	want := "--- a/u\n" +
+		"+++ b/u\n" +
+		"@@ -1,2 +1 @@\n" +
+		" x\n" +
+		"-\n"
+	if out != want {
+		t.Errorf("renderUnitDiff =\n%q\nwant\n%q", out, want)
+	}
+}
+
+func TestRenderUnitFullMarksMissingFinalNewline(t *testing.T) {
+	out := renderUnitFull("u", "a\nb\n", "a\nb")
+
+	want := "--- a/u\n" +
+		"+++ b/u\n" +
+		" a\n" +
+		"-b\n" +
+		"+b\n" +
+		"\\ No newline at end of file\n"
+	if out != want {
+		t.Errorf("renderUnitFull =\n%q\nwant\n%q", out, want)
+	}
+}
+
+func TestRenderUnitDiffMarksUnchangedLastLineWithoutNewline(t *testing.T) {
+	// The final line is unchanged but unterminated on both sides; git marks the
+	// context line itself, so the marker rides an equal op, not only -/+ ops.
+	out := renderUnitDiff("u", "a\nctx", "A\nctx")
+
+	want := "--- a/u\n" +
+		"+++ b/u\n" +
+		"@@ -1,2 +1,2 @@\n" +
+		"-a\n" +
+		"+A\n" +
+		" ctx\n" +
+		"\\ No newline at end of file\n"
+	if out != want {
+		t.Errorf("renderUnitDiff =\n%q\nwant\n%q", out, want)
+	}
+}
+
+func TestRenderUnitDiffMarksBothSidesMissingNewline(t *testing.T) {
+	// Both sides' final line is unterminated and differs; git emits a marker
+	// after each side's line independently.
+	out := renderUnitDiff("u", "old", "new")
+
+	want := "--- a/u\n" +
+		"+++ b/u\n" +
+		"@@ -1 +1 @@\n" +
+		"-old\n" +
+		"\\ No newline at end of file\n" +
+		"+new\n" +
+		"\\ No newline at end of file\n"
+	if out != want {
+		t.Errorf("renderUnitDiff =\n%q\nwant\n%q", out, want)
+	}
+}
+
 func TestRenderUnitDiffOmitsCountForSingleLineRange(t *testing.T) {
 	// A one-line old side renders "@@ -1 +1,2 @@", matching git's omission of a
 	// unit count.

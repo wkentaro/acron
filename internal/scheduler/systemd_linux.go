@@ -43,7 +43,8 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 		if err != nil {
 			return nil, fmt.Errorf("apply %s: %w", job.Name, err)
 		}
-		if unitsUnchanged(job.Name, service, timer) && isActive(job.Name) {
+		unchanged := unitsUnchanged(job.Name, service, timer)
+		if unchanged && isActive(job.Name) {
 			continue
 		}
 		if installed[job.Name] {
@@ -52,6 +53,11 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 			plan.Created = append(plan.Created, job.Name)
 		}
 		if dryRun {
+			change, err := convergeChange(job.Name, service, timer, installed[job.Name], unchanged)
+			if err != nil {
+				return nil, fmt.Errorf("apply %s: %w", job.Name, err)
+			}
+			plan.Changes = append(plan.Changes, change)
 			continue
 		}
 		if err := writeUnits(job.Name, service, timer); err != nil {
@@ -65,6 +71,11 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 		}
 		plan.Removed = append(plan.Removed, name)
 		if dryRun {
+			change, err := removeChange(name)
+			if err != nil {
+				return nil, fmt.Errorf("remove %s: %w", name, err)
+			}
+			plan.Changes = append(plan.Changes, change)
 			continue
 		}
 		if err := removeJob(name); err != nil {
@@ -195,6 +206,53 @@ func renderJob(job config.Job, self string, base map[string]string) (service, ti
 
 func unitsUnchanged(job, service, timer string) bool {
 	return fileEquals(paths.ServicePath(job), service) && fileEquals(paths.TimerPath(job), timer)
+}
+
+// convergeChange captures a created or updated Job's unit content so a dry-run
+// caller can render the planned write as a diff. installed is false for a create
+// (nothing on disk to read); unchanged marks the inactive-timer case, where the
+// units are byte-identical and apply would only reload and restart, so the
+// caller states that reason rather than rendering a diff and the content is left
+// unread.
+func convergeChange(job, service, timer string, installed, unchanged bool) (PlanChange, error) {
+	svcInstalled, tmrInstalled := "", ""
+	if installed && !unchanged {
+		var err error
+		if svcInstalled, err = readUnit(paths.ServicePath(job)); err != nil {
+			return PlanChange{}, err
+		}
+		if tmrInstalled, err = readUnit(paths.TimerPath(job)); err != nil {
+			return PlanChange{}, err
+		}
+	}
+	return PlanChange{
+		Name:           job,
+		UnitsUnchanged: unchanged,
+		Units: []UnitFile{
+			{Name: paths.ServiceName(job), Desired: service, Installed: svcInstalled},
+			{Name: paths.TimerName(job), Desired: timer, Installed: tmrInstalled},
+		},
+	}, nil
+}
+
+// removeChange captures an orphaned Job's installed unit content so a dry-run
+// caller can render the planned prune as an all-red diff against /dev/null.
+func removeChange(job string) (PlanChange, error) {
+	svc, err := readUnit(paths.ServicePath(job))
+	if err != nil {
+		return PlanChange{}, err
+	}
+	tmr, err := readUnit(paths.TimerPath(job))
+	if err != nil {
+		return PlanChange{}, err
+	}
+	return PlanChange{
+		Name: job,
+		Units: []UnitFile{
+			{Name: paths.ServiceName(job), Installed: svc},
+			{Name: paths.TimerName(job), Installed: tmr},
+		},
+	}, nil
 }
 
 func fileEquals(path, content string) bool {

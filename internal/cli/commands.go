@@ -188,7 +188,7 @@ func runApply(dryRun bool) error {
 	if dryRun {
 		header = "Would apply:"
 	}
-	printPlan(plan, header)
+	fmt.Print(renderPlan(plan, header, dryRun))
 	return nil
 }
 
@@ -197,7 +197,7 @@ func runDestroy() error {
 	if err != nil {
 		return err
 	}
-	printPlan(plan, "Destroyed:")
+	fmt.Print(renderPlan(plan, "Destroyed:", false))
 	return nil
 }
 
@@ -316,12 +316,12 @@ func runShow(name string) error {
 	return nil
 }
 
-// renderUnit shows a unit's content, or a diff of installed against desired when
-// the two differ (drift). When only one side exists (unapplied has no installed,
-// orphaned has no desired), it shows that side.
+// renderUnit shows a unit's content, or a git-style diff of installed against
+// desired when the two differ (drift). When only one side exists (unapplied has
+// no installed, orphaned has no desired), it shows that side plainly.
 func renderUnit(unit scheduler.UnitFile) string {
 	if unit.Desired != "" && unit.Installed != "" && unit.Desired != unit.Installed {
-		return renderDiff(unit.Installed, unit.Desired)
+		return renderUnitDiff(unit.Name, unit.Installed, unit.Desired)
 	}
 	if unit.Desired != "" {
 		return unit.Desired
@@ -829,21 +829,73 @@ func promptRetry(scanner *bufio.Scanner) (bool, error) {
 	return answer == "" || answer == "y" || answer == "yes", nil
 }
 
-func printPlan(plan *scheduler.Plan, header string) {
+// renderPlan renders a Plan for printing. An empty plan is "Nothing to do.". A
+// real apply or destroy prints the terse +/~/- summary. A dry-run apply renders
+// each planned action as a git-style diff under its symbol line, so the whole
+// plan is previewable in one read.
+func renderPlan(plan *scheduler.Plan, header string, dryRun bool) string {
 	if plan.Empty() {
-		fmt.Println("Nothing to do.")
-		return
+		return "Nothing to do.\n"
 	}
-	fmt.Println(header)
+	var b strings.Builder
+	fmt.Fprintln(&b, header)
+	if dryRun {
+		writePlanDiffs(&b, plan)
+	} else {
+		writePlanSummary(&b, plan)
+	}
+	return b.String()
+}
+
+func writePlanSummary(b *strings.Builder, plan *scheduler.Plan) {
 	for _, name := range plan.Created {
-		fmt.Printf("  %s %s\n", addStyle.Render("+"), name)
+		fmt.Fprintf(b, "  %s %s\n", addStyle.Render("+"), name)
 	}
 	for _, name := range plan.Updated {
-		fmt.Printf("  %s %s\n", runningStyle.Render("~"), name)
+		fmt.Fprintf(b, "  %s %s\n", runningStyle.Render("~"), name)
 	}
 	for _, name := range plan.Removed {
-		fmt.Printf("  %s %s\n", removeStyle.Render("-"), name)
+		fmt.Fprintf(b, "  %s %s\n", removeStyle.Render("-"), name)
 	}
+}
+
+func writePlanDiffs(b *strings.Builder, plan *scheduler.Plan) {
+	byName := make(map[string]scheduler.PlanChange, len(plan.Changes))
+	for _, change := range plan.Changes {
+		byName[change.Name] = change
+	}
+	var sections []string
+	for _, name := range plan.Created {
+		sections = append(sections, renderPlanChange(addStyle.Render("+"), name, byName[name]))
+	}
+	for _, name := range plan.Updated {
+		sections = append(sections, renderPlanChange(runningStyle.Render("~"), name, byName[name]))
+	}
+	for _, name := range plan.Removed {
+		sections = append(sections, renderPlanChange(removeStyle.Render("-"), name, byName[name]))
+	}
+	b.WriteString(strings.Join(sections, "\n"))
+}
+
+// renderPlanChange renders one planned action: a symbol-and-name line followed
+// by a git-style diff for each changed unit, with a blank line between units.
+// writePlanDiffs blank-line separates the sections too, so the plan reads job by
+// job. A Job in the plan despite byte-identical units states that reason instead,
+// since there is no textual diff to show.
+func renderPlanChange(symbol, name string, change scheduler.PlanChange) string {
+	if change.UnitsUnchanged {
+		return fmt.Sprintf("  %s %s %s\n", symbol, name,
+			commentStyle.Render("(units unchanged, would reload and restart)"))
+	}
+	header := fmt.Sprintf("  %s %s\n", symbol, name)
+	var diffs []string
+	for _, unit := range change.Units {
+		if unit.Installed == unit.Desired {
+			continue
+		}
+		diffs = append(diffs, renderUnitDiff(unit.Name, unit.Installed, unit.Desired))
+	}
+	return header + strings.Join(diffs, "\n")
 }
 
 func renderStatus(status runner.Status, reason runner.Reason) string {

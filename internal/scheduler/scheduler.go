@@ -2,11 +2,24 @@ package scheduler
 
 // Plan reports what an Apply or Destroy did (or would do, under dry run). A
 // converging Job is Created when no unit is yet installed for it and Updated
-// when an installed unit would be rewritten or restarted.
+// when an installed unit would be rewritten or restarted. Under dry run, Apply
+// also records a PlanChange per entry so the caller can render the planned
+// action as a diff.
 type Plan struct {
 	Created []string
 	Updated []string
 	Removed []string
+	Changes []PlanChange
+}
+
+// PlanChange carries what a dry-run caller needs to render one planned action as
+// a diff: the Job's unit files with their installed and desired content, and
+// whether the Job is in the plan despite byte-identical units (UnitsUnchanged),
+// where apply would only reload and restart with no textual change (ADR-0011).
+type PlanChange struct {
+	Name           string
+	Units          []UnitFile
+	UnitsUnchanged bool
 }
 
 // Empty reports whether the Plan would change nothing.

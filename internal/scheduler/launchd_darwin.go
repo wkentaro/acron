@@ -44,7 +44,8 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 		if err != nil {
 			return nil, fmt.Errorf("apply %s: %w", job.Name, err)
 		}
-		if plistUnchanged(job.Name, plist) && isLoaded(job.Name) {
+		unchanged := plistUnchanged(job.Name, plist)
+		if unchanged && isLoaded(job.Name) {
 			continue
 		}
 		if installed[job.Name] {
@@ -53,6 +54,11 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 			plan.Created = append(plan.Created, job.Name)
 		}
 		if dryRun {
+			change, err := convergeChange(job.Name, plist, installed[job.Name], unchanged)
+			if err != nil {
+				return nil, fmt.Errorf("apply %s: %w", job.Name, err)
+			}
+			plan.Changes = append(plan.Changes, change)
 			continue
 		}
 		if err := applyJob(job.Name, plist); err != nil {
@@ -66,6 +72,11 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 		}
 		plan.Removed = append(plan.Removed, name)
 		if dryRun {
+			change, err := removeChange(name)
+			if err != nil {
+				return nil, fmt.Errorf("remove %s: %w", name, err)
+			}
+			plan.Changes = append(plan.Changes, change)
 			continue
 		}
 		if err := removeJob(name); err != nil {
@@ -169,6 +180,43 @@ func renderJob(job config.Job, self string, base map[string]string) (string, err
 func plistUnchanged(job, plist string) bool {
 	existing, err := os.ReadFile(paths.PlistPath(job))
 	return err == nil && string(existing) == plist
+}
+
+// convergeChange captures a created or updated Job's plist content so a dry-run
+// caller can render the planned write as a diff. installed is false for a create
+// (nothing on disk to read); unchanged marks the not-loaded case, where the
+// plist is byte-identical and apply would only reload the agent, so the caller
+// states that reason rather than rendering a diff and the content is left unread.
+func convergeChange(job, plist string, installed, unchanged bool) (PlanChange, error) {
+	plistInstalled := ""
+	if installed && !unchanged {
+		var err error
+		if plistInstalled, err = readUnit(paths.PlistPath(job)); err != nil {
+			return PlanChange{}, err
+		}
+	}
+	return PlanChange{
+		Name:           job,
+		UnitsUnchanged: unchanged,
+		Units: []UnitFile{
+			{Name: paths.PlistLabel(job), Desired: plist, Installed: plistInstalled},
+		},
+	}, nil
+}
+
+// removeChange captures an orphaned Job's installed plist so a dry-run caller can
+// render the planned prune as an all-red diff against /dev/null.
+func removeChange(job string) (PlanChange, error) {
+	plist, err := readUnit(paths.PlistPath(job))
+	if err != nil {
+		return PlanChange{}, err
+	}
+	return PlanChange{
+		Name: job,
+		Units: []UnitFile{
+			{Name: paths.PlistLabel(job), Installed: plist},
+		},
+	}, nil
 }
 
 func isLoaded(job string) bool {

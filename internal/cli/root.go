@@ -49,7 +49,7 @@ acron destroy               # Remove all acron units (keep config)
 		newShowCmd(),
 		newLogsCmd(),
 		newHistoryCmd(),
-		newEditCmd(),
+		newConfigCmd(),
 	)
 
 	root.SetHelpFunc(func(cmd *cobra.Command, _ []string) {

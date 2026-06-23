@@ -113,7 +113,8 @@ atomically (no partial apply) on:
 | `acron logs <job> [run]`  | Show a Run's captured output (newest, or by index or timestamp).                 |
 | `acron logs <job> -f`     | Follow the Run in progress; stream until it finishes (ADR-0013).                 |
 | `acron history <job>`     | List a Job's past Runs (index, time, status).                                    |
-| `acron edit`              | Open the Config in `$EDITOR`, validate on save.                                  |
+| `acron config show`       | Print the Config to stdout.                                                      |
+| `acron config edit`       | Open the Config in `$EDITOR`, validate on save.                                  |
 
 Verb choice follows the on-demand declarative-reconcile idiom (`apply`/`destroy`
 from Terraform; `apply` also matches chezmoi). `install`/`uninstall`/`sync` were

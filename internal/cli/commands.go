@@ -164,7 +164,27 @@ acron history nightly-triage  # One job
 	}
 }
 
-func newEditCmd() *cobra.Command {
+func newConfigCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "config",
+		Short: "Show or edit the config",
+	}
+	cmd.AddCommand(newConfigShowCmd(), newConfigEditCmd())
+	return cmd
+}
+
+func newConfigShowCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "show",
+		Short: "Print the config to stdout",
+		Args:  cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			return runConfigShow()
+		},
+	}
+}
+
+func newConfigEditCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "edit",
 		Short: "Open the config in $EDITOR",
@@ -711,6 +731,19 @@ func parseSelectorTime(timestamp string) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
+}
+
+func runConfigShow() error {
+	path := config.DefaultPath()
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("no config at %s; run \"acron config edit\" to create one", path)
+	}
+	if err != nil {
+		return err
+	}
+	_, err = os.Stdout.Write(data)
+	return err
 }
 
 func runEdit() error {

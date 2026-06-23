@@ -28,8 +28,12 @@ type row struct {
 func renderHelp(cmd *cobra.Command) string {
 	var b strings.Builder
 
-	if desc := cmd.Short; desc != "" {
-		fmt.Fprintf(&b, "%s\n\n", desc)
+	desc := cmd.Long
+	if desc == "" {
+		desc = cmd.Short
+	}
+	if desc != "" {
+		fmt.Fprintf(&b, "%s\n\n", strings.TrimSpace(desc))
 	}
 
 	fmt.Fprintf(&b, "%s %s\n", headerStyle.Render("Usage:"), usageLine(cmd))

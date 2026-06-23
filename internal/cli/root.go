@@ -35,7 +35,6 @@ acron history nightly-triage # List a job's past runs
 acron destroy               # Remove all acron units (keep config)
 `,
 	}
-	root.CompletionOptions.DisableDefaultCmd = true
 	root.PersistentFlags().BoolP("help", "h", false, "Print help")
 	root.Flags().BoolP("version", "V", false, "Print version")
 	root.SetVersionTemplate("acron " + commentStyle.Render(version) + "\n")

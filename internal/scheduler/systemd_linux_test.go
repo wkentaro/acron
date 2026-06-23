@@ -272,6 +272,82 @@ func TestApplyDryRunPlan(t *testing.T) {
 	}
 }
 
+func TestShow(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := os.MkdirAll(paths.SystemdUserDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	job := config.Job{
+		Name: "show-target", Schedule: "0 2 * * *", Agent: []string{"true"},
+		Prompt: "x", Cwd: "/tmp",
+	}
+	cfg := &config.Config{Jobs: []config.Job{job}}
+	self, err := paths.Self()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := snapshotEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, timer, err := renderJob(job, self, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	units, err := Show(cfg, "show-target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if units.State != StateUnapplied {
+		t.Errorf("uninstalled state = %q, want unapplied", units.State)
+	}
+	if units.Units[0].Desired != service || units.Units[0].Installed != "" {
+		t.Error("uninstalled service: want desired set, installed empty")
+	}
+	if units.Units[1].Desired != timer || units.Units[1].Installed != "" {
+		t.Error("uninstalled timer: want desired set, installed empty")
+	}
+
+	if err := os.WriteFile(paths.ServicePath("show-target"), []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.TimerPath("show-target"), []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	units, err = Show(cfg, "show-target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if units.State != StateDrifted {
+		t.Errorf("stale state = %q, want drifted", units.State)
+	}
+	if units.Units[0].Installed != "stale" || units.Units[0].Desired != service {
+		t.Errorf("drifted service: got installed=%q desired set=%v", units.Units[0].Installed, units.Units[0].Desired == service)
+	}
+
+	if err := os.WriteFile(paths.ServicePath("ghost"), []byte("svc"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.TimerPath("ghost"), []byte("tmr"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	units, err = Show(cfg, "ghost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if units.State != StateOrphaned {
+		t.Errorf("ghost state = %q, want orphaned", units.State)
+	}
+	if units.Units[0].Desired != "" || units.Units[0].Installed != "svc" {
+		t.Errorf("orphaned service: got desired=%q installed=%q", units.Units[0].Desired, units.Units[0].Installed)
+	}
+
+	if _, err := Show(cfg, "nope"); err == nil {
+		t.Error("Show on unknown job: want error, got nil")
+	}
+}
+
 func TestEscapeEnv(t *testing.T) {
 	if got := escapeEnv(`a"b\c`); got != `a\"b\\c` {
 		t.Errorf("escapeEnv = %q", got)

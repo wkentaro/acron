@@ -75,6 +75,54 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 	return plan, nil
 }
 
+// Show reports a Job's generated plist (rendered from the Config) alongside the
+// content installed on this machine and the Job's ApplyState, so the caller can
+// diff what apply would write against what is already there.
+func Show(cfg *config.Config, name string) (*JobUnits, error) {
+	self, err := paths.Self()
+	if err != nil {
+		return nil, err
+	}
+	base, err := snapshotEnv()
+	if err != nil {
+		return nil, err
+	}
+	installed, err := isOwned(name)
+	if err != nil {
+		return nil, err
+	}
+
+	job, ok := cfg.FindJob(name)
+	if !ok {
+		if !installed {
+			return nil, fmt.Errorf("no job named %q", name)
+		}
+		plistContent, err := readUnit(paths.PlistPath(name))
+		if err != nil {
+			return nil, err
+		}
+		return &JobUnits{Name: name, State: StateOrphaned, Units: []UnitFile{
+			{Name: paths.PlistLabel(name), Installed: plistContent},
+		}}, nil
+	}
+
+	state, err := jobApplyState(job, self, base, installed)
+	if err != nil {
+		return nil, err
+	}
+	plist, err := renderJob(job, self, base)
+	if err != nil {
+		return nil, err
+	}
+	plistContent, err := readUnit(paths.PlistPath(name))
+	if err != nil {
+		return nil, err
+	}
+	return &JobUnits{Name: name, State: state, Units: []UnitFile{
+		{Name: paths.PlistLabel(name), Desired: plist, Installed: plistContent},
+	}}, nil
+}
+
 func Destroy() (*Plan, error) {
 	owned, err := ownedJobs()
 	if err != nil {

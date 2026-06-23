@@ -31,3 +31,21 @@ type JobState struct {
 	Name  string
 	State ApplyState
 }
+
+// UnitFile is one OS scheduler file acron manages for a Job: its identifying
+// name, the content rendered from the Config (Desired), and the content
+// installed on this machine (Installed). Either may be empty: an orphaned Job
+// has no Desired, an unapplied Job has no Installed.
+type UnitFile struct {
+	Name      string
+	Desired   string
+	Installed string
+}
+
+// JobUnits is what show reports for one Job: its ApplyState and the unit files
+// acron manages for it.
+type JobUnits struct {
+	Name  string
+	State ApplyState
+	Units []UnitFile
+}

@@ -87,6 +87,64 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 	return plan, nil
 }
 
+// Show reports a Job's generated units (rendered from the Config) alongside the
+// content installed on this machine and the Job's ApplyState, so the caller can
+// diff what apply would write against what is already there.
+func Show(cfg *config.Config, name string) (*JobUnits, error) {
+	self, err := paths.Self()
+	if err != nil {
+		return nil, err
+	}
+	base, err := snapshotEnv()
+	if err != nil {
+		return nil, err
+	}
+	installed, err := isOwned(name)
+	if err != nil {
+		return nil, err
+	}
+
+	job, ok := cfg.FindJob(name)
+	if !ok {
+		if !installed {
+			return nil, fmt.Errorf("no job named %q", name)
+		}
+		svcContent, err := readUnit(paths.ServicePath(name))
+		if err != nil {
+			return nil, err
+		}
+		tmrContent, err := readUnit(paths.TimerPath(name))
+		if err != nil {
+			return nil, err
+		}
+		return &JobUnits{Name: name, State: StateOrphaned, Units: []UnitFile{
+			{Name: paths.ServiceName(name), Installed: svcContent},
+			{Name: paths.TimerName(name), Installed: tmrContent},
+		}}, nil
+	}
+
+	state, err := jobApplyState(job, self, base, installed)
+	if err != nil {
+		return nil, err
+	}
+	service, timer, err := renderJob(job, self, base)
+	if err != nil {
+		return nil, err
+	}
+	svcContent, err := readUnit(paths.ServicePath(name))
+	if err != nil {
+		return nil, err
+	}
+	tmrContent, err := readUnit(paths.TimerPath(name))
+	if err != nil {
+		return nil, err
+	}
+	return &JobUnits{Name: name, State: state, Units: []UnitFile{
+		{Name: paths.ServiceName(name), Desired: service, Installed: svcContent},
+		{Name: paths.TimerName(name), Desired: timer, Installed: tmrContent},
+	}}, nil
+}
+
 func Destroy() (*Plan, error) {
 	owned, err := ownedJobs()
 	if err != nil {

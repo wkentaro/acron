@@ -166,7 +166,11 @@ func runApply(dryRun bool) error {
 	if err != nil {
 		return err
 	}
-	printPlan(plan, dryRun)
+	header := "Applied:"
+	if dryRun {
+		header = "Would apply:"
+	}
+	printPlan(plan, header)
 	return nil
 }
 
@@ -175,7 +179,7 @@ func runDestroy() error {
 	if err != nil {
 		return err
 	}
-	printPlan(plan, false)
+	printPlan(plan, "Destroyed:")
 	return nil
 }
 
@@ -622,18 +626,17 @@ func promptRetry(scanner *bufio.Scanner) (bool, error) {
 	return answer == "" || answer == "y" || answer == "yes", nil
 }
 
-func printPlan(plan *scheduler.Plan, dryRun bool) {
-	if len(plan.Applied) == 0 && len(plan.Removed) == 0 {
+func printPlan(plan *scheduler.Plan, header string) {
+	if plan.Empty() {
 		fmt.Println("Nothing to do.")
 		return
 	}
-	header := "Plan:"
-	if dryRun {
-		header = "Plan (dry run):"
-	}
 	fmt.Println(header)
-	for _, name := range plan.Applied {
+	for _, name := range plan.Created {
 		fmt.Printf("  %s %s\n", addStyle.Render("+"), name)
+	}
+	for _, name := range plan.Updated {
+		fmt.Printf("  %s %s\n", runningStyle.Render("~"), name)
 	}
 	for _, name := range plan.Removed {
 		fmt.Printf("  %s %s\n", removeStyle.Render("-"), name)

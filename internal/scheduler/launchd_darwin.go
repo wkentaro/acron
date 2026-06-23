@@ -24,6 +24,14 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	owned, err := ownedJobs()
+	if err != nil {
+		return nil, err
+	}
+	installed := make(map[string]bool, len(owned))
+	for _, name := range owned {
+		installed[name] = true
+	}
 
 	plan := &Plan{}
 	desired := make(map[string]bool)
@@ -39,7 +47,11 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 		if plistUnchanged(job.Name, plist) && isLoaded(job.Name) {
 			continue
 		}
-		plan.Applied = append(plan.Applied, job.Name)
+		if installed[job.Name] {
+			plan.Updated = append(plan.Updated, job.Name)
+		} else {
+			plan.Created = append(plan.Created, job.Name)
+		}
 		if dryRun {
 			continue
 		}
@@ -48,10 +60,6 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 		}
 	}
 
-	owned, err := ownedJobs()
-	if err != nil {
-		return nil, err
-	}
 	for _, name := range owned {
 		if desired[name] {
 			continue

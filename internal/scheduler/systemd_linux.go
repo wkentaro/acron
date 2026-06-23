@@ -23,6 +23,14 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	owned, err := ownedJobs()
+	if err != nil {
+		return nil, err
+	}
+	installed := make(map[string]bool, len(owned))
+	for _, name := range owned {
+		installed[name] = true
+	}
 
 	plan := &Plan{}
 	desired := make(map[string]bool)
@@ -38,7 +46,11 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 		if unitsUnchanged(job.Name, service, timer) && isActive(job.Name) {
 			continue
 		}
-		plan.Applied = append(plan.Applied, job.Name)
+		if installed[job.Name] {
+			plan.Updated = append(plan.Updated, job.Name)
+		} else {
+			plan.Created = append(plan.Created, job.Name)
+		}
 		if dryRun {
 			continue
 		}
@@ -47,10 +59,6 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 		}
 	}
 
-	owned, err := ownedJobs()
-	if err != nil {
-		return nil, err
-	}
 	for _, name := range owned {
 		if desired[name] {
 			continue
@@ -64,13 +72,14 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 		}
 	}
 
-	if dryRun || (len(plan.Applied) == 0 && len(plan.Removed) == 0) {
+	if dryRun || plan.Empty() {
 		return plan, nil
 	}
 	if err := systemctl("daemon-reload"); err != nil {
 		return nil, err
 	}
-	for _, name := range plan.Applied {
+	converged := append(append([]string{}, plan.Created...), plan.Updated...)
+	for _, name := range converged {
 		if err := enableJob(name); err != nil {
 			return nil, fmt.Errorf("apply %s: %w", name, err)
 		}

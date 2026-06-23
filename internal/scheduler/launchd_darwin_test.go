@@ -4,6 +4,7 @@ package scheduler
 
 import (
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -64,6 +65,42 @@ func TestPlistUnchanged(t *testing.T) {
 	}
 	if plistUnchanged("missing", "<plist>x</plist>") {
 		t.Error("expected changed when plist is absent")
+	}
+}
+
+func TestApplyDryRunPlan(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := os.MkdirAll(paths.LaunchAgentsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	job := func(name string) config.Job {
+		return config.Job{
+			Name: name, Schedule: "0 2 * * *", Agent: []string{"true"},
+			Prompt: "x", Cwd: "/tmp",
+		}
+	}
+	// "existing" has an installed plist, so apply would update it; "fresh" has
+	// none, so apply would create it; "ghost" is owned but undeclared, so it is
+	// pruned.
+	for _, name := range []string{"applydryrun-existing", "applydryrun-ghost"} {
+		if err := os.WriteFile(paths.PlistPath(name), []byte("stale"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := &config.Config{Jobs: []config.Job{job("applydryrun-fresh"), job("applydryrun-existing")}}
+
+	plan, err := Apply(cfg, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(plan.Created, []string{"applydryrun-fresh"}) {
+		t.Errorf("Created = %v, want [applydryrun-fresh]", plan.Created)
+	}
+	if !reflect.DeepEqual(plan.Updated, []string{"applydryrun-existing"}) {
+		t.Errorf("Updated = %v, want [applydryrun-existing]", plan.Updated)
+	}
+	if !reflect.DeepEqual(plan.Removed, []string{"applydryrun-ghost"}) {
+		t.Errorf("Removed = %v, want [applydryrun-ghost]", plan.Removed)
 	}
 }
 

@@ -1,9 +1,17 @@
 package scheduler
 
-// Plan reports what an Apply or Destroy did (or would do, under dry run).
+// Plan reports what an Apply or Destroy did (or would do, under dry run). A
+// converging Job is Created when no unit is yet installed for it and Updated
+// when an installed unit would be rewritten or restarted.
 type Plan struct {
-	Applied []string
+	Created []string
+	Updated []string
 	Removed []string
+}
+
+// Empty reports whether the Plan would change nothing.
+func (p *Plan) Empty() bool {
+	return len(p.Created)+len(p.Updated)+len(p.Removed) == 0
 }
 
 // ApplyState is a Job's standing relative to apply: applied exactly when apply

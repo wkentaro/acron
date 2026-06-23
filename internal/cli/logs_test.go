@@ -66,56 +66,13 @@ func TestResolveLogLatestPicksNewest(t *testing.T) {
 	seedRuns(t, "job", makeThreeRuns())
 
 	for _, selector := range []string{"", "latest"} {
-		name, err := resolveLog("job", selector)
+		rec, err := resolveLog("job", selector)
 		if err != nil {
 			t.Fatalf("selector %q: %v", selector, err)
 		}
-		if name != "2026-06-22T02-00-00.log" {
-			t.Errorf("selector %q: got %q", selector, name)
+		if rec.Log != "2026-06-22T02-00-00.log" {
+			t.Errorf("selector %q: got %q", selector, rec.Log)
 		}
-	}
-}
-
-func TestResolveLogByIndex(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	seedRuns(t, "job", makeThreeRuns())
-
-	cases := map[string]string{
-		"1": "2026-06-22T02-00-00.log",
-		"2": "2026-06-22T01-00-00.log",
-		"3": "2026-06-22T00-00-00.log",
-	}
-	for selector, want := range cases {
-		name, err := resolveLog("job", selector)
-		if err != nil {
-			t.Fatalf("selector %q: %v", selector, err)
-		}
-		if name != want {
-			t.Errorf("selector %q: got %q, want %q", selector, name, want)
-		}
-	}
-}
-
-func TestResolveLogIndexOutOfRange(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	seedRuns(t, "job", makeThreeRuns())
-
-	_, err := resolveLog("job", "4")
-	if err == nil || !strings.Contains(err.Error(), "no run 4") {
-		t.Fatalf("got %v", err)
-	}
-}
-
-func TestResolveLogSkippedIndexReportsSkip(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	seedRuns(t, "job", []runner.Record{
-		{Start: "2026-06-22T00:00:00Z", Status: runner.StatusSuccess, Log: "2026-06-22T00-00-00.log"},
-		{Start: "2026-06-22T01:00:00Z", Status: runner.StatusSkipped, Reason: runner.ReasonCondition},
-	})
-
-	_, err := resolveLog("job", "1")
-	if err == nil || !strings.Contains(err.Error(), "skipped") {
-		t.Fatalf("got %v", err)
 	}
 }
 
@@ -126,12 +83,12 @@ func TestResolveLogLatestSkipsRunsWithoutOutput(t *testing.T) {
 		{Start: "2026-06-22T01:00:00Z", Status: runner.StatusSkipped, Reason: runner.ReasonOverlap},
 	})
 
-	name, err := resolveLog("job", "latest")
+	rec, err := resolveLog("job", "latest")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if name != "2026-06-22T00-00-00.log" {
-		t.Errorf("got %q", name)
+	if rec.Log != "2026-06-22T00-00-00.log" {
+		t.Errorf("got %q", rec.Log)
 	}
 }
 
@@ -153,12 +110,12 @@ func TestResolveLogByTimestamp(t *testing.T) {
 	seedRuns(t, "job", makeThreeRuns())
 
 	for _, selector := range []string{"2026-06-22T01-00-00", "2026-06-22 01:00:00"} {
-		name, err := resolveLog("job", selector)
+		rec, err := resolveLog("job", selector)
 		if err != nil {
 			t.Fatalf("selector %q: %v", selector, err)
 		}
-		if name != "2026-06-22T01-00-00.log" {
-			t.Errorf("selector %q: got %q", selector, name)
+		if rec.Log != "2026-06-22T01-00-00.log" {
+			t.Errorf("selector %q: got %q", selector, rec.Log)
 		}
 	}
 }
@@ -175,12 +132,24 @@ func TestResolveLogByTimestampSkippedRunHasNoOutput(t *testing.T) {
 	}
 }
 
-func TestResolveLogUnknownTimestamp(t *testing.T) {
+func TestResolveLogTimestampNoMatch(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	seedRuns(t, "job", makeThreeRuns())
 
 	_, err := resolveLog("job", "2026-01-01T00-00-00")
 	if err == nil || !strings.Contains(err.Error(), "no run") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// A bare ordinal like "3" is no longer a selector; it falls through to timestamp
+// parsing and is rejected, rather than picking the 3rd most recent run.
+func TestResolveLogRejectsNonTimestampSelector(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	seedRuns(t, "job", makeThreeRuns())
+
+	_, err := resolveLog("job", "3")
+	if err == nil || !strings.Contains(err.Error(), "unrecognized timestamp") {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -199,12 +168,33 @@ func TestRunLogsCopiesOutput(t *testing.T) {
 	seedConfig(t, "job")
 	seedRuns(t, "job", makeThreeRuns())
 
-	out, err := captureStdout(t, func() error { return runLogs("job", "2") })
+	out, err := captureStdout(t, func() error { return runLogs("job", "2026-06-22 01:00:00") })
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out != "output of 2026-06-22T01-00-00.log" {
 		t.Errorf("got %q", out)
+	}
+}
+
+func TestRunLogsSummaryToStderrLeavesStdoutClean(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	seedConfig(t, "job")
+	seedRuns(t, "job", []runner.Record{
+		{Start: "2026-06-22T02:00:00Z", Status: runner.StatusSuccess, Exit: 0, DurationS: 252, Log: "2026-06-22T02-00-00.log"},
+	})
+
+	out, errOut, err := captureOutErr(t, func() error { return runLogs("job", "latest") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "output of 2026-06-22T02-00-00.log" {
+		t.Errorf("stdout not the pure log body: %q", out)
+	}
+	for _, want := range []string{"job", "2026-06-22 02:00:00", "success", "4min 12s"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr summary %q missing %q", errOut, want)
+		}
 	}
 }
 

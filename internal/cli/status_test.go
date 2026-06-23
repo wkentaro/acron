@@ -14,7 +14,7 @@ func TestRenderStatusTable(t *testing.T) {
 	tbl.Row("job-a", "drifted", "success", "2026-01-01 00:00", "1h ago", "—", "—")
 	tbl.Row("job-b", "applied", "never run", "", "", "2026-01-02 00:00", "12min 30s") // never-run jobs have no last-run timestamp
 
-	out := renderStatusTable(tbl)
+	out := renderTable(tbl)
 
 	if strings.HasSuffix(out, "\n\n") {
 		t.Errorf("output ends with a blank line: %q", out)

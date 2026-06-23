@@ -186,9 +186,9 @@ func TestFollowFooter(t *testing.T) {
 		rec  runner.Record
 		want string
 	}{
-		{"success", runner.Record{Status: runner.StatusSuccess, DurationS: 182}, "run success in 3m2s"},
-		{"failure", runner.Record{Status: runner.StatusFailure, Exit: 1, DurationS: 252}, "run failure (exit 1) in 4m12s"},
-		{"timeout", runner.Record{Status: runner.StatusTimeout, Exit: -1, DurationS: 1800}, "run timeout in 30m0s"},
+		{"success", runner.Record{Status: runner.StatusSuccess, DurationS: 182}, "run success in 3min 2s"},
+		{"failure", runner.Record{Status: runner.StatusFailure, Exit: 1, DurationS: 252}, "run failure (exit 1) in 4min 12s"},
+		{"timeout", runner.Record{Status: runner.StatusTimeout, Exit: -1, DurationS: 1800}, "run timeout in 30min"},
 		{"condition failure", runner.Record{Status: runner.StatusFailure, Reason: runner.ReasonCondition, Exit: 2}, "run failure (condition, exit 2) in 0s"},
 		{"skipped", runner.Record{Status: runner.StatusSkipped, Reason: runner.ReasonCondition}, "run skipped (condition)"},
 	}

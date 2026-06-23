@@ -18,10 +18,13 @@ import (
 	"github.com/wkentaro/acron/internal/paths"
 )
 
+// LogTimestampLayout is shared so a log filename can be parsed back into its
+// time with the exact layout used to format it.
+const LogTimestampLayout = "2006-01-02T15-04-05"
+
 const (
-	timestampLayout = "2006-01-02T15-04-05"
-	killGrace       = 10 * time.Second
-	keepRuns        = 50
+	killGrace = 10 * time.Second
+	keepRuns  = 50
 )
 
 type Status string
@@ -92,7 +95,7 @@ func runAgent(job config.Job, timeout time.Duration) (Result, error) {
 	}
 
 	start := time.Now()
-	logName := start.Format(timestampLayout) + ".log"
+	logName := start.Format(LogTimestampLayout) + ".log"
 	logFile, err := os.Create(filepath.Join(runsDir, logName))
 	if err != nil {
 		return Result{}, err
@@ -243,7 +246,7 @@ func recordConditionFailure(job string, start time.Time, exit int, output []byte
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
 		return Result{}, err
 	}
-	logName := start.Format(timestampLayout) + ".log"
+	logName := start.Format(LogTimestampLayout) + ".log"
 	if err := os.WriteFile(filepath.Join(runsDir, logName), output, 0o644); err != nil {
 		return Result{}, err
 	}
@@ -320,7 +323,7 @@ func RunningSince(job string) (time.Time, bool) {
 	if newest == "" {
 		return time.Time{}, true
 	}
-	start, err := time.Parse(timestampLayout, strings.TrimSuffix(newest, ".log"))
+	start, err := time.Parse(LogTimestampLayout, strings.TrimSuffix(newest, ".log"))
 	if err != nil {
 		return time.Time{}, true
 	}

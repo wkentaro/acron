@@ -824,7 +824,8 @@ func initialBuffer(path string) ([]byte, error) {
 # [[job]]
 # name     = "nightly-triage"             # required, unique, [a-z0-9_-]
 # schedule = "0 2 * * *"                  # required, 5-field cron
-# agent    = ["claude", "-p", "{prompt}"] # required argv; {prompt} is substituted
+# agent    = ["claude", "-p", "{prompt}", "--dangerously-skip-permissions", "--verbose", "--output-format", "stream-json"] # required argv; {prompt} is substituted
+#   stream-json gives live output for long sessions; for a short session, drop --verbose/--output-format for plain-text logs
 # prompt   = "Triage open issues"         # required
 # cwd      = "~/src/acron"                # required, absolute or ~-expanded
 # enabled  = true                         # optional, default true

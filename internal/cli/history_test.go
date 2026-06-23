@@ -6,10 +6,37 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
 
+	"github.com/wkentaro/acron/internal/paths"
 	"github.com/wkentaro/acron/internal/runner"
 )
+
+// markRunning simulates an in-flight Run: it holds the job's lock for the test's
+// lifetime and stamps logName as the live log, mirroring how the runner records
+// a Run in progress. An empty logName models the Condition-check window, before
+// the agent log (and thus the start time) exists.
+func markRunning(t *testing.T, job, logName string) {
+	t.Helper()
+	if err := os.MkdirAll(paths.LocksDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(paths.LockPath(job), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteAt([]byte(logName), 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		_ = file.Close()
+	})
+}
 
 func seedConfig(t *testing.T, jobs ...string) {
 	t.Helper()
@@ -92,6 +119,61 @@ func TestRunHistoryInterleavedNewestFirst(t *testing.T) {
 		if !strings.Contains(row, wantTimes[i]) {
 			t.Errorf("row %d = %q, want time %q", i, row, wantTimes[i])
 		}
+	}
+}
+
+func TestRunHistoryShowsRunningRunAtTop(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	seedConfig(t, "job")
+	seedRuns(t, "job", []runner.Record{
+		{Start: "2026-06-22T00:00:00Z", Status: runner.StatusSuccess, DurationS: 5, Log: "2026-06-22T00-00-00.log"},
+	})
+	markRunning(t, "job", "2026-06-23T00-00-00.log")
+
+	rows := historyRows(t, "job", 0)
+	if len(rows) != 2 {
+		t.Fatalf("want 2 rows (running + finished), got %d: %q", len(rows), rows)
+	}
+	top := rows[0]
+	if !strings.Contains(top, "running") {
+		t.Errorf("top row is not the running run: %q", top)
+	}
+	if !strings.Contains(top, "2026-06-23 00:00:00") {
+		t.Errorf("running row missing its start timestamp: %q", top)
+	}
+	if !strings.Contains(top, "—") {
+		t.Errorf("running row should show — for duration: %q", top)
+	}
+}
+
+func TestRunHistoryDeduplicatesJustFinishedRun(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	seedConfig(t, "job")
+	seedRuns(t, "job", []runner.Record{
+		{Start: "2026-06-23T00:00:00Z", Status: runner.StatusSuccess, DurationS: 5, Log: "2026-06-23T00-00-00.log"},
+	})
+	markRunning(t, "job", "2026-06-23T00-00-00.log")
+
+	rows := historyRows(t, "job", 0)
+	if len(rows) != 1 {
+		t.Fatalf("a just-finished run still holding the lock should not double as a running row, got %d rows: %q", len(rows), rows)
+	}
+	if strings.Contains(rows[0], "running") {
+		t.Errorf("row should show the finished status, not running: %q", rows[0])
+	}
+}
+
+func TestRunHistoryOmitsRunningRunBeforeStartKnown(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	seedConfig(t, "job")
+	markRunning(t, "job", "")
+
+	out, err := captureStdout(t, func() error { return runHistory("job", 0) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `No runs for "job"`) {
+		t.Errorf("Condition-check run (unknown start) should be omitted, got %q", out)
 	}
 }
 

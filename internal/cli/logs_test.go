@@ -66,7 +66,7 @@ func TestResolveLogLatestPicksNewest(t *testing.T) {
 	seedRuns(t, "job", makeThreeRuns())
 
 	for _, selector := range []string{"", "latest"} {
-		rec, err := resolveLog("job", selector)
+		rec, _, err := resolveLog("job", selector)
 		if err != nil {
 			t.Fatalf("selector %q: %v", selector, err)
 		}
@@ -83,7 +83,7 @@ func TestResolveLogLatestSkipsRunsWithoutOutput(t *testing.T) {
 		{Start: "2026-06-22T01:00:00Z", Status: runner.StatusSkipped, Reason: runner.ReasonOverlap},
 	})
 
-	rec, err := resolveLog("job", "latest")
+	rec, _, err := resolveLog("job", "latest")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestResolveLogAllSkipped(t *testing.T) {
 		{Start: "2026-06-22T01:00:00Z", Status: runner.StatusSkipped, Reason: runner.ReasonCondition},
 	})
 
-	_, err := resolveLog("job", "latest")
+	_, _, err := resolveLog("job", "latest")
 	if err == nil || !strings.Contains(err.Error(), "no captured output") {
 		t.Fatalf("got %v", err)
 	}
@@ -110,7 +110,7 @@ func TestResolveLogByTimestamp(t *testing.T) {
 	seedRuns(t, "job", makeThreeRuns())
 
 	for _, selector := range []string{"2026-06-22T01-00-00", "2026-06-22 01:00:00"} {
-		rec, err := resolveLog("job", selector)
+		rec, _, err := resolveLog("job", selector)
 		if err != nil {
 			t.Fatalf("selector %q: %v", selector, err)
 		}
@@ -126,7 +126,7 @@ func TestResolveLogByTimestampSkippedRunHasNoOutput(t *testing.T) {
 		{Start: "2026-06-22T00:00:00Z", Status: runner.StatusSkipped, Reason: runner.ReasonOverlap},
 	})
 
-	_, err := resolveLog("job", "2026-06-22 00:00:00")
+	_, _, err := resolveLog("job", "2026-06-22 00:00:00")
 	if err == nil || !strings.Contains(err.Error(), "skipped") {
 		t.Fatalf("got %v", err)
 	}
@@ -136,7 +136,7 @@ func TestResolveLogTimestampNoMatch(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	seedRuns(t, "job", makeThreeRuns())
 
-	_, err := resolveLog("job", "2026-01-01T00-00-00")
+	_, _, err := resolveLog("job", "2026-01-01T00-00-00")
 	if err == nil || !strings.Contains(err.Error(), "no run") {
 		t.Fatalf("got %v", err)
 	}
@@ -148,7 +148,7 @@ func TestResolveLogRejectsNonTimestampSelector(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	seedRuns(t, "job", makeThreeRuns())
 
-	_, err := resolveLog("job", "3")
+	_, _, err := resolveLog("job", "3")
 	if err == nil || !strings.Contains(err.Error(), "unrecognized timestamp") {
 		t.Fatalf("got %v", err)
 	}
@@ -157,7 +157,7 @@ func TestResolveLogRejectsNonTimestampSelector(t *testing.T) {
 func TestResolveLogNoRuns(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
-	_, err := resolveLog("job", "")
+	_, _, err := resolveLog("job", "")
 	if err == nil || !strings.Contains(err.Error(), "no runs") {
 		t.Fatalf("got %v", err)
 	}
@@ -195,6 +195,58 @@ func TestRunLogsSummaryToStderrLeavesStdoutClean(t *testing.T) {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("stderr summary %q missing %q", errOut, want)
 		}
+	}
+}
+
+func TestResolveLogTimestampResolvesRunningRun(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	markRunning(t, "job", "2026-06-23T00-00-00.log")
+
+	for _, selector := range []string{"2026-06-23T00-00-00", "2026-06-23 00:00:00"} {
+		rec, running, err := resolveLog("job", selector)
+		if err != nil {
+			t.Fatalf("selector %q: %v", selector, err)
+		}
+		if !running {
+			t.Errorf("selector %q: running = false, want true", selector)
+		}
+		if rec.Log != "2026-06-23T00-00-00.log" {
+			t.Errorf("selector %q: got %q", selector, rec.Log)
+		}
+	}
+}
+
+func TestResolveLogLatestIgnoresRunningRun(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	markRunning(t, "job", "2026-06-23T00-00-00.log")
+
+	_, _, err := resolveLog("job", "latest")
+	if err == nil || !strings.Contains(err.Error(), "no runs") {
+		t.Fatalf("latest should stay on finished output, got %v", err)
+	}
+}
+
+func TestRunLogsTailsRunningRun(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	seedConfig(t, "job")
+	dir := paths.RunsDir("job")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "2026-06-23T00-00-00.log"), []byte("partial output"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	markRunning(t, "job", "2026-06-23T00-00-00.log")
+
+	out, errOut, err := captureOutErr(t, func() error { return runLogs("job", "2026-06-23 00:00:00") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "partial output" {
+		t.Errorf("stdout = %q, want the partial live log", out)
+	}
+	if !strings.Contains(errOut, "running") {
+		t.Errorf("summary should mark the run running: %q", errOut)
 	}
 }
 

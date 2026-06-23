@@ -111,6 +111,7 @@ atomically (no partial apply) on:
 | `acron run <job>`         | The entry the scheduler invokes; also runs a Job now, for testing. |
 | `acron status`            | Table of each Job's Apply state and latest Run status (ADR-0011).  |
 | `acron logs <job> [run]`  | Show a Run's captured output (newest, or by index or timestamp).   |
+| `acron logs <job> -f`     | Follow the Run in progress; stream until it finishes (ADR-0013).   |
 | `acron history <job>`     | List a Job's past Runs (index, time, status).                      |
 | `acron edit`              | Open the Config in `$EDITOR`, validate on save.                    |
 
@@ -171,7 +172,11 @@ The wrapper that the scheduler invokes. It owns the three pillars (ADR-0007):
 4. **Exec the agent**: substitute `prompt` for `{prompt}` in `agent` (or append),
    then exec directly (no shell).
 5. **Capture output**: combined stdout+stderr (interleaved) to the per-Run log
-   `~/.local/state/acron/runs/<job>/<timestamp>.log`.
+   `~/.local/state/acron/runs/<job>/<timestamp>.log`. The log's name is stamped
+   into the lock file when the agent starts, so `acron logs --follow` and `acron
+   status` can find the in-flight Run's log before it has a history record
+   (ADR-0013). The lock file is truncated at acquire, so empty-while-held means
+   the Condition is still running.
 6. **Enforce timeout**: on expiry send SIGTERM, then SIGKILL after a short grace.
    Default 1h; `0` disables. A killed Run is recorded as `timeout`. The default
    exists because skip-if-running means a hung Run would otherwise hold the lock
@@ -196,7 +201,8 @@ condition failures carry `reason: condition` with `status: failure` and a log.
 `acron status` reads the last record per Job for its Run-status column; `acron
 history` lists a Job's records, and `acron logs` reads them to resolve the
 requested Run (newest by default, or the Nth most recent by index, or an exact
-timestamp).
+timestamp). `acron logs --follow` instead reads the in-flight Run's log name
+from the lock file and streams it until the Run finishes (ADR-0013).
 
 ## Environment
 

@@ -104,16 +104,16 @@ atomically (no partial apply) on:
 
 ## CLI
 
-| Command                   | Purpose                                                            |
-| ------------------------- | ------------------------------------------------------------------ |
-| `acron apply [--dry-run]` | Reconcile OS units to the Config.                                  |
-| `acron destroy`           | Remove all acron-owned units from this machine; keep the Config.   |
-| `acron run <job>`         | The entry the scheduler invokes; also runs a Job now, for testing. |
-| `acron status`            | Table of each Job's Apply state and latest Run status (ADR-0011).  |
-| `acron logs <job> [run]`  | Show a Run's captured output (newest, or by index or timestamp).   |
-| `acron logs <job> -f`     | Follow the Run in progress; stream until it finishes (ADR-0013).   |
-| `acron history <job>`     | List a Job's past Runs (index, time, status).                      |
-| `acron edit`              | Open the Config in `$EDITOR`, validate on save.                    |
+| Command                   | Purpose                                                                          |
+| ------------------------- | -------------------------------------------------------------------------------- |
+| `acron apply [--dry-run]` | Reconcile OS units to the Config.                                                |
+| `acron destroy`           | Remove all acron-owned units from this machine; keep the Config.                 |
+| `acron run <job>`         | The entry the scheduler invokes; also runs a Job now, for testing.               |
+| `acron status`            | Table of each Job's Apply state, latest Run, and next fire (ADR-0011, ADR-0014). |
+| `acron logs <job> [run]`  | Show a Run's captured output (newest, or by index or timestamp).                 |
+| `acron logs <job> -f`     | Follow the Run in progress; stream until it finishes (ADR-0013).                 |
+| `acron history <job>`     | List a Job's past Runs (index, time, status).                                    |
+| `acron edit`              | Open the Config in `$EDITOR`, validate on save.                                  |
 
 Verb choice follows the on-demand declarative-reconcile idiom (`apply`/`destroy`
 from Terraform; `apply` also matches chezmoi). `install`/`uninstall`/`sync` were
@@ -153,6 +153,14 @@ A table with two independent axes per Job (ADR-0011):
   before it was disabled).
 - **Run status** — the latest Run's outcome and time, read from the last record
   in `runs/<job>/history.jsonl`.
+
+Each absolute timestamp column is paired with a relative one in `systemctl
+list-timers` style (ADR-0014): `LAST` with `PASSED` (`1h 35min ago`) and the
+next-fire `NEXT` with `LEFT` (`12min 30s`). The relative columns are always on
+and additive — the absolute `LAST`/`NEXT` cells stay byte-for-byte unchanged so
+they remain the run selectors `acron logs`/`history` accept — and a relative cell
+is shown exactly when its absolute partner has a value. Durations use a
+hand-rolled formatter on a ladder capped at days (no weeks/months/years).
 
 ## Runtime: `acron run <job>`
 

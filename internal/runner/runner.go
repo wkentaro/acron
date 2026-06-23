@@ -338,7 +338,8 @@ func InFlight(job string) (logName string, running bool) {
 // RunningSince reports whether a Run is in flight for the Job and, when known,
 // when it started. The start time is parsed from the in-flight Run's log file
 // name; it is unknown (zero) during an earlier Condition check, before the
-// agent's log exists.
+// agent's log exists. The name is stamped from a local time.Now(), so it parses
+// back in time.Local to recover the true instant (not just the right digits).
 func RunningSince(job string) (time.Time, bool) {
 	logName, running := InFlight(job)
 	if !running {
@@ -347,7 +348,7 @@ func RunningSince(job string) (time.Time, bool) {
 	if logName == "" {
 		return time.Time{}, true
 	}
-	start, err := time.Parse(LogTimestampLayout, strings.TrimSuffix(logName, ".log"))
+	start, err := time.ParseInLocation(LogTimestampLayout, strings.TrimSuffix(logName, ".log"), time.Local)
 	if err != nil {
 		return time.Time{}, true
 	}

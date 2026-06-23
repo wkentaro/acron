@@ -10,12 +10,15 @@ user can read the Config-to-unit translation (the `OnCalendar`, the resolved
 drifted from desired. A real (non-dry-run) `apply` keeps only a terse `+`/`~`/`-`
 summary.
 
-The two surfaces share **one** diff renderer for the delta case — git unified
-diff, three lines of context, `---` / `+++` header and `@@` hunks, red `-` and
-green `+` — but they default differently because inspecting a unit and diffing one
-are different operations. `show` defaults to plain content and reaches for the
-diff renderer only on drift; `--dry-run` renders every planned action as a diff.
-They are not one surface at two context widths.
+The two surfaces share **one** delta renderer — `---` / `+++` header, red `-` and
+green `+` — but drive it differently because inspecting a unit and previewing an
+action are different operations. `show` is an inspector, so it always prints the
+_whole_ unit: plain when in sync, and on drift the full unit with the
+installed-vs-desired delta marked inline (`-`/`+`) and no `@@` hunk headers.
+`--dry-run` is an action preview, so it renders each planned action as a focused
+git diff — three lines of context, `@@` hunks. The context width follows from the
+framing (an inspector shows the whole file; a preview shows the change), it is not
+the axis itself.
 
 The point of `--dry-run` is to answer "what exactly would change?" before
 committing. The pre-existing one-line `~ acron-process-prs` told the user _that_ a
@@ -33,17 +36,18 @@ the `+`/`~`/`-` plan symbols and the diff bodies tell one consistent story.
 
 ## Considered Options
 
-- **Inspection-vs-action framing vs. "one surface at two context widths."** Chose
-  the framing. The tempting unification was to call `show` an `apply --dry-run`
-  with full context and have everything flow through the diff renderer. But git
-  does not work that way: `git show` and `git diff` _both_ default to `-U3`, and
-  git's actual whole-file inspection (`git show <rev>:<path>`) prints the file
-  plain, with no diff chrome at all. chezmoi (acron's closest analog, ADR-0008)
-  splits the same way — `chezmoi cat` prints the target plainly, `chezmoi diff`
-  shows a unified diff. Forcing `show` through the diff renderer when nothing has
-  drifted yields a zero-change diff: `cat` wearing `@@` headers, serving the rare
-  drift case at the expense of the common inspect case. So the axis is the
-  framing (inspect vs. preview an action), not the context width.
+- **Inspection-vs-action framing, not "one surface at two context widths."** The
+  axis between `show` and `--dry-run` is the framing (inspect a unit vs. preview an
+  action), not a context-width knob on one renderer. `git show <rev>:<path>` —
+  git's whole-file inspection — prints the file in full, while `git diff` shows a
+  focused `-U3` delta; chezmoi (acron's closest analog, ADR-0008) splits the same
+  way, `chezmoi cat` printing the target in full and `chezmoi diff` a unified diff.
+  An inspector shows the _whole_ unit. So in sync `show` prints the unit plainly,
+  and on drift it still shows the whole unit, with the delta marked inline — not
+  collapsed to `@@` hunks, which would abandon the full-unit inspection the command
+  exists for. `--dry-run` keeps the focused `-U3` diff because there the change
+  _is_ the subject. The shared renderer differing in context width between the two
+  is a consequence of the framing, not the decision itself.
 
 - **git unified diff vs. a Terraform-style structured diff.** Chose git unified
   diff. Terraform diffs _structured_ resources, so it renders per-attribute
@@ -85,19 +89,21 @@ the `+`/`~`/`-` plan symbols and the diff bodies tell one consistent story.
 
 ## Consequences
 
-- **One delta renderer, plus a plain path for `show`.** `diff.go` ends with a
-  single git-style unified-diff renderer — context window, `@@` ranges, `---` /
-  `+++` with `/dev/null` on an absent side. `--dry-run` routes every plan entry
-  through it; `show` routes through it only on drift and otherwise prints the unit
-  plainly (the existing plain-or-diff branch in `renderUnit`, preserved). This is
-  real new logic over today's whole-file line diff: git hunks need context
-  grouping and line-number ranges the current renderer does not compute.
+- **One delta renderer at two widths, plus a plain path for `show`.** `diff.go`
+  ends with a single git-style unified-diff renderer — `---` / `+++` with
+  `/dev/null` on an absent side, red `-` / green `+`. `--dry-run` routes every plan
+  entry through it at `-U3` with `@@` hunks; `show` routes through it only on drift
+  at full width — every line, inline `-`/`+`, no `@@` header — and otherwise prints
+  the unit plainly (the plain-or-full branch in `renderUnit`). The hunk machinery
+  (context grouping, `@@` line-number ranges) drives `--dry-run`; `show` reuses the
+  same line-marking body and skips the hunk header.
 
-- **`show`'s plain cases are unchanged; its drift case gains git chrome.** A
-  not-yet-installed, orphaned, or applied unit still prints plainly. A _drifted_
-  unit, today rendered as a whole-file line diff, now renders as git hunks
-  (`@@`, `---`/`+++`) — visually near-identical on these short units, but in the
-  shared format.
+- **`show`'s plain cases are unchanged; its drift case shows the full unit with
+  inline markers.** A not-yet-installed, orphaned, or applied unit still prints
+  plainly. A _drifted_ unit shows the whole unit under a `---` / `+++` header with
+  the changed lines marked `-`/`+` inline and no `@@` hunk header — the full
+  inspection the command is for, annotated with what drifted, rather than collapsed
+  to the focused hunks `--dry-run` uses.
 
 - **`Plan` must carry content, not just names.** Today `scheduler.Plan` holds
   `[]string` job names; rendering diffs requires it to also carry the

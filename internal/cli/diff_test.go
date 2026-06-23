@@ -20,6 +20,22 @@ func TestRenderUnitDiffMixedChange(t *testing.T) {
 	}
 }
 
+func TestRenderUnitFullShowsEveryLineWithoutHunkHeader(t *testing.T) {
+	installed := "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\n"
+	desired := "l1\nl2\nl3\nl4\nL5\nl6\nl7\nl8\n"
+	out := renderUnitFull("u", installed, desired)
+
+	want := "--- a/u\n" +
+		"+++ b/u\n" +
+		" l1\n l2\n l3\n l4\n" +
+		"-l5\n" +
+		"+L5\n" +
+		" l6\n l7\n l8\n"
+	if out != want {
+		t.Errorf("renderUnitFull =\n%q\nwant\n%q", out, want)
+	}
+}
+
 func TestRenderUnitDiffCreateAgainstDevNull(t *testing.T) {
 	out := renderUnitDiff("acron-x.timer", "", "[Timer]\nOnCalendar=*-*-* 02:00:00\n")
 

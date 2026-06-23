@@ -647,7 +647,9 @@ func followFooter(rec runner.Record) string {
 // job it spans every job (the JOB column repeats); with a job it filters to that
 // one (the column stays, so the filtered view is the same table with rows
 // removed). limit caps the rows to the most recent N across the selection; 0
-// shows all. Skipped Runs appear like any other outcome.
+// shows all. Skipped Runs appear like any other outcome. An in-flight Run shows
+// as a "running" row at the top with no duration yet; it is omitted only while
+// still in its Condition check, before a start time exists.
 func runHistory(name string, limit int) error {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -670,9 +672,10 @@ func runHistory(name string, limit int) error {
 	}
 
 	type jobRun struct {
-		job   string
-		rec   runner.Record
-		start time.Time
+		job     string
+		rec     runner.Record
+		start   time.Time
+		running bool
 	}
 	var runs []jobRun
 	for _, job := range jobs {
@@ -684,6 +687,24 @@ func runHistory(name string, limit int) error {
 			start, _ := time.Parse(time.RFC3339, rec.Start)
 			runs = append(runs, jobRun{job: job.Name, rec: rec, start: start})
 		}
+		since, ok := runner.RunningSince(job.Name)
+		if !ok || since.IsZero() {
+			continue
+		}
+		// The lock outlives the final record by a hair: a just-finished Run can
+		// still hold it after its record is on disk. Drop the synthetic row when
+		// the newest record is that same Run, so it never shows up twice.
+		if n := len(records); n > 0 {
+			if last, err := time.Parse(time.RFC3339, records[n-1].Start); err == nil && last.Equal(since) {
+				continue
+			}
+		}
+		runs = append(runs, jobRun{
+			job:     job.Name,
+			rec:     runner.Record{Start: since.Format(time.RFC3339)},
+			start:   since,
+			running: true,
+		})
 	}
 	if len(runs) == 0 {
 		if name == "" {
@@ -705,7 +726,13 @@ func runHistory(name string, limit int) error {
 	t := historyTable()
 	for _, run := range runs {
 		when, passed := renderRunWhen(run.rec, run.start, now)
-		t.Row(cmdStyle.Render(run.job), when, passed, renderStatus(run.rec.Status, run.rec.Reason), renderRunDuration(run.rec))
+		status := renderStatus(run.rec.Status, run.rec.Reason)
+		duration := renderRunDuration(run.rec)
+		if run.running {
+			status = runningStyle.Render("running")
+			duration = commentStyle.Render("—")
+		}
+		t.Row(cmdStyle.Render(run.job), when, passed, status, duration)
 	}
 	fmt.Print(renderTable(t))
 	return nil

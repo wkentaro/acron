@@ -118,7 +118,8 @@ func newShowCmd() *cobra.Command {
 }
 
 func newLogsCmd() *cobra.Command {
-	return &cobra.Command{
+	var follow bool
+	cmd := &cobra.Command{
 		Use:   "logs <job> [run]",
 		Short: "Show a job's captured output",
 		Args:  cobra.RangeArgs(1, 2),
@@ -127,15 +128,21 @@ acron logs nightly-triage                       # Newest run (same as "latest")
 acron logs nightly-triage latest                # Newest run explicitly
 acron logs nightly-triage 3                     # The 3rd most recent run (see acron history)
 acron logs nightly-triage "2026-06-22 02:00:00" # A specific run by its displayed timestamp
+acron logs nightly-triage --follow              # Stream the run in progress until it finishes
 `,
 		RunE: func(_ *cobra.Command, args []string) error {
 			selector := ""
 			if len(args) == 2 {
 				selector = args[1]
 			}
+			if follow {
+				return runFollow(args[0], selector)
+			}
 			return runLogs(args[0], selector)
 		},
 	}
+	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Stream the run in progress until it finishes")
+	return cmd
 }
 
 func newHistoryCmd() *cobra.Command {
@@ -407,13 +414,144 @@ func runLogs(job, selector string) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.Open(filepath.Join(paths.RunsDir(job), name))
+	return copyLog(job, name)
+}
+
+func copyLog(job, logName string) error {
+	f, err := os.Open(filepath.Join(paths.RunsDir(job), logName))
 	if err != nil {
 		return err
 	}
 	defer func() { _ = f.Close() }()
 	_, err = io.Copy(os.Stdout, f)
 	return err
+}
+
+const followPollInterval = 200 * time.Millisecond
+
+// runFollow attaches to the Job's in-flight Run and streams its agent transcript
+// to stdout until the Run finishes, then prints a one-line status footer to
+// stderr. It refuses an explicit run selector (a finished Run never grows) and
+// errors when no Run is in flight to attach to.
+func runFollow(job, selector string) error {
+	if selector != "" && selector != "latest" {
+		return fmt.Errorf("--follow attaches to the running run; it cannot be combined with a run selector")
+	}
+	if err := requireJob(job); err != nil {
+		return err
+	}
+	if !runner.IsRunning(job) {
+		return fmt.Errorf("no run in progress for %q", job)
+	}
+
+	logName, ok := awaitLiveLog(job)
+	if !ok {
+		return followFinished(job)
+	}
+	return streamLiveLog(job, logName)
+}
+
+// awaitLiveLog waits for the in-flight Run's agent log to appear, polling past
+// the Condition check during which no log exists yet. It returns false if the
+// Run ends before any agent log streams (a skip, or a Run that finished as we
+// attached).
+func awaitLiveLog(job string) (string, bool) {
+	notified := false
+	for {
+		logName, running := runner.InFlight(job)
+		if !running {
+			return "", false
+		}
+		if logName != "" {
+			return logName, true
+		}
+		if !notified {
+			fmt.Fprintln(os.Stderr, "waiting for agent to start...")
+			notified = true
+		}
+		time.Sleep(followPollInterval)
+	}
+}
+
+func streamLiveLog(job, logName string) error {
+	f, err := os.Open(filepath.Join(paths.RunsDir(job), logName))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+
+	for {
+		if _, err := io.Copy(os.Stdout, f); err != nil {
+			return err
+		}
+		if !runner.IsRunning(job) {
+			// The lock is released only after the runner has written the
+			// final bytes and recorded the Run, so one last copy drains the
+			// tail the loop's previous copy could not yet see.
+			if _, err := io.Copy(os.Stdout, f); err != nil {
+				return err
+			}
+			break
+		}
+		time.Sleep(followPollInterval)
+	}
+	return printFollowFooter(job, logName)
+}
+
+// followFinished handles a Run that ended before any agent log streamed: it
+// prints that Run's complete log if it produced one, then the status footer,
+// rather than erroring after we already reported the Run as live.
+func followFinished(job string) error {
+	rec, ok, err := runner.LastRecord(job)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("run for %q ended without a recorded result", job)
+	}
+	if rec.Log != "" {
+		if err := copyLog(job, rec.Log); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintln(os.Stderr, followFooter(rec))
+	return nil
+}
+
+// printFollowFooter prints the status footer for the Run identified by logName,
+// found by its log name rather than by "last record" so a Run that starts and
+// finishes between the end of the stream and this lookup cannot shadow it.
+func printFollowFooter(job, logName string) error {
+	records, err := runner.History(job)
+	if err != nil {
+		return err
+	}
+	for i := len(records) - 1; i >= 0; i-- {
+		if records[i].Log == logName {
+			fmt.Fprintln(os.Stderr, followFooter(records[i]))
+			return nil
+		}
+	}
+	fmt.Fprintln(os.Stderr, "run finished (no recorded result)")
+	return nil
+}
+
+func followFooter(rec runner.Record) string {
+	var notes []string
+	if rec.Reason != "" {
+		notes = append(notes, string(rec.Reason))
+	}
+	if rec.Exit > 0 {
+		notes = append(notes, fmt.Sprintf("exit %d", rec.Exit))
+	}
+	msg := "run " + string(rec.Status)
+	if len(notes) > 0 {
+		msg += " (" + strings.Join(notes, ", ") + ")"
+	}
+	if rec.Status == runner.StatusSkipped {
+		return msg
+	}
+	return msg + " in " + (time.Duration(rec.DurationS) * time.Second).String()
 }
 
 func runHistory(name string) error {

@@ -24,15 +24,18 @@ func complete(t *testing.T, args ...string) string {
 	return out.String()
 }
 
-func TestCompleteJobNamesListsNamesWithSchedules(t *testing.T) {
+func TestCompleteJobNamesListsNames(t *testing.T) {
 	seedConfig(t, "nightly-triage", "weekly-report")
 	noFileComp := fmt.Sprintf(":%d", cobra.ShellCompDirectiveNoFileComp)
 	for _, verb := range []string{"run", "trigger", "show", "logs", "history"} {
 		out := complete(t, verb, "")
 		for _, name := range []string{"nightly-triage", "weekly-report"} {
-			if !strings.Contains(out, name+"\t* * * * *") {
-				t.Errorf("%s completion missing %q with its schedule in:\n%s", verb, name, out)
+			if !strings.Contains(out, name) {
+				t.Errorf("%s completion missing %q in:\n%s", verb, name, out)
 			}
+		}
+		if strings.Contains(out, "\t") {
+			t.Errorf("%s completion attached a description; schedules group confusingly in zsh:\n%s", verb, out)
 		}
 		if !strings.Contains(out, noFileComp) {
 			t.Errorf("%s completion missing NoFileComp directive %q in:\n%s", verb, noFileComp, out)

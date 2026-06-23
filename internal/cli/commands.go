@@ -260,6 +260,9 @@ func runJob(name string) error {
 	}
 	fmt.Printf("%s  %s  exit %d  %s\n",
 		renderStatus(result.Status, result.Reason), name, result.Exit, result.Duration.Round(time.Second))
+	if len(result.Command) > 0 {
+		fmt.Println(commentStyle.Render(renderCommand(result.Command)))
+	}
 	if result.LogPath != "" {
 		fmt.Println(commentStyle.Render(result.LogPath))
 	}
@@ -998,6 +1001,30 @@ func renderStatus(status runner.Status, reason runner.Reason) string {
 		label += " (" + string(reason) + ")"
 	}
 	return statusStyle(status).Render(label)
+}
+
+func renderCommand(argv []string) string {
+	quoted := make([]string, len(argv))
+	for i, arg := range argv {
+		quoted[i] = quoteArg(arg)
+	}
+	return strings.Join(quoted, " ")
+}
+
+func quoteArg(arg string) string {
+	if arg == "" {
+		return "''"
+	}
+	// Characters safe to leave unquoted, mirroring shlex.quote. This is a
+	// display convenience; the agent itself runs from argv, not a shell.
+	const safe = "-_./:@,=+%"
+	for _, r := range arg {
+		if ('a' <= r && r <= 'z') || ('A' <= r && r <= 'Z') || ('0' <= r && r <= '9') || strings.ContainsRune(safe, r) {
+			continue
+		}
+		return "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
+	}
+	return arg
 }
 
 func statusStyle(status runner.Status) lipgloss.Style {

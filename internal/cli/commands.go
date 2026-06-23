@@ -304,8 +304,8 @@ func statusTable() *table.Table {
 	headers := []string{
 		commentStyle.Render("JOB"),
 		commentStyle.Render("APPLY"),
-		commentStyle.Render("LAST RUN"),
-		commentStyle.Render("WHEN"),
+		commentStyle.Render("STATUS"),
+		commentStyle.Render("LAST"),
 		commentStyle.Render("NEXT"),
 	}
 	return table.New().

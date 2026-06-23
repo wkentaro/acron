@@ -486,23 +486,34 @@ func runLogs(job, selector string) error {
 	if err := requireJob(job); err != nil {
 		return err
 	}
-	rec, err := resolveLog(job, selector)
+	rec, running, err := resolveLog(job, selector)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, renderLogSummary(job, rec))
+	fmt.Fprintln(os.Stderr, renderLogSummary(job, rec, running, time.Now()))
 	return copyLog(job, rec.Log)
 }
 
 // renderLogSummary orients the reader with a one-line header before the log
 // body: job, the run's displayed timestamp, its status, and how long it ran. It
 // goes to stderr (like the --follow footer) so stdout stays the pure log payload.
-func renderLogSummary(job string, rec runner.Record) string {
+// An in-flight Run has no final duration, so it reports how long it has been
+// running instead.
+func renderLogSummary(job string, rec runner.Record, running bool, now time.Time) string {
+	var status, tail string
+	if running {
+		status = runningStyle.Render("running")
+		start, _ := time.Parse(time.RFC3339, rec.Start)
+		tail = "running for " + formatDuration(now.Sub(start))
+	} else {
+		status = renderStatus(rec.Status, rec.Reason)
+		tail = "in " + formatDuration(recDuration(rec))
+	}
 	return strings.Join([]string{
 		cmdStyle.Render(job),
 		commentStyle.Render(formatWhen(rec.Start)),
-		renderStatus(rec.Status, rec.Reason),
-		commentStyle.Render("in " + formatDuration(recDuration(rec))),
+		status,
+		commentStyle.Render(tail),
 	}, "  ")
 }
 
@@ -764,22 +775,26 @@ func renderRunDuration(rec runner.Record) string {
 	return commentStyle.Render(formatDuration(recDuration(rec)))
 }
 
-// resolveLog picks the Run whose output `logs` should show: the newest Run with
-// output (no selector or "latest"), or the Run at a displayed timestamp. A Run
-// is addressed by its fired time, never a positional index, so the timestamp the
-// table prints round-trips back here as the selector.
-func resolveLog(job, selector string) (runner.Record, error) {
+// resolveLog picks the Run whose output `logs` should show and reports whether
+// it is in flight: the newest finished Run with output (no selector or
+// "latest"), or the Run at a displayed timestamp. A Run is addressed by its
+// fired time, never a positional index, so the timestamp the table prints
+// round-trips back here as the selector. A timestamp also resolves the in-flight
+// Run; "latest" stays on finished output, since --follow is the verb for
+// attaching to a running Run.
+func resolveLog(job, selector string) (runner.Record, bool, error) {
 	records, err := runner.History(job)
 	if err != nil {
-		return runner.Record{}, err
+		return runner.Record{}, false, err
+	}
+	if selector != "" && selector != "latest" {
+		return logByTimestamp(job, selector, records)
 	}
 	if len(records) == 0 {
-		return runner.Record{}, fmt.Errorf("no runs for job %q", job)
+		return runner.Record{}, false, fmt.Errorf("no runs for job %q", job)
 	}
-	if selector == "" || selector == "latest" {
-		return latestLog(job, records)
-	}
-	return logByTimestamp(job, selector, records)
+	rec, err := latestLog(job, records)
+	return rec, false, err
 }
 
 func latestLog(job string, records []runner.Record) (runner.Record, error) {
@@ -791,10 +806,10 @@ func latestLog(job string, records []runner.Record) (runner.Record, error) {
 	return runner.Record{}, fmt.Errorf("no captured output for job %q", job)
 }
 
-func logByTimestamp(job, timestamp string, records []runner.Record) (runner.Record, error) {
+func logByTimestamp(job, timestamp string, records []runner.Record) (runner.Record, bool, error) {
 	want, ok := parseSelectorTime(timestamp)
 	if !ok {
-		return runner.Record{}, fmt.Errorf("unrecognized timestamp %q for job %q (want %q)", timestamp, job, displayTimeFormat)
+		return runner.Record{}, false, fmt.Errorf("unrecognized timestamp %q for job %q (want %q)", timestamp, job, displayTimeFormat)
 	}
 	for _, rec := range records {
 		start, err := time.Parse(time.RFC3339, rec.Start)
@@ -802,11 +817,32 @@ func logByTimestamp(job, timestamp string, records []runner.Record) (runner.Reco
 			continue
 		}
 		if rec.Log == "" {
-			return runner.Record{}, fmt.Errorf("run at %q of job %q was skipped (%s); no output", timestamp, job, rec.Reason)
+			return runner.Record{}, false, fmt.Errorf("run at %q of job %q was skipped (%s); no output", timestamp, job, rec.Reason)
 		}
-		return rec, nil
+		return rec, false, nil
 	}
-	return runner.Record{}, fmt.Errorf("no run %q for job %q", timestamp, job)
+	if rec, ok := inflightRecord(job); ok {
+		start, _ := time.Parse(time.RFC3339, rec.Start)
+		if start.Equal(want) {
+			return rec, true, nil
+		}
+	}
+	return runner.Record{}, false, fmt.Errorf("no run %q for job %q", timestamp, job)
+}
+
+// inflightRecord builds a Record for the Job's running Run from the live lock
+// state, or reports false when no Run holds the lock or its start is not yet
+// known (still in the Condition check, before the agent log exists).
+func inflightRecord(job string) (runner.Record, bool) {
+	since, ok := runner.RunningSince(job)
+	if !ok || since.IsZero() {
+		return runner.Record{}, false
+	}
+	logName, _ := runner.InFlight(job)
+	if logName == "" {
+		return runner.Record{}, false
+	}
+	return runner.Record{Start: since.Format(time.RFC3339), Log: logName}, true
 }
 
 // parseSelectorTime reads a timestamp selector in either the human-readable

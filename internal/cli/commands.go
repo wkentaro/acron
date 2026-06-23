@@ -316,12 +316,13 @@ func runShow(name string) error {
 	return nil
 }
 
-// renderUnit shows a unit's content, or a git-style diff of installed against
-// desired when the two differ (drift). When only one side exists (unapplied has
+// renderUnit shows a unit's full content. On drift it shows the whole unit with
+// the installed-vs-desired delta marked inline (-/+), since `show` is about the
+// unit's content, not just the change. When only one side exists (unapplied has
 // no installed, orphaned has no desired), it shows that side plainly.
 func renderUnit(unit scheduler.UnitFile) string {
 	if unit.Desired != "" && unit.Installed != "" && unit.Desired != unit.Installed {
-		return renderUnitDiff(unit.Name, unit.Installed, unit.Desired)
+		return renderUnitFull(unit.Name, unit.Installed, unit.Desired)
 	}
 	if unit.Desired != "" {
 		return unit.Desired

@@ -26,17 +26,38 @@ type diffOp struct {
 // hunks with three lines of context and real line ranges, removed lines in red
 // and added lines in green. An absent installed side renders a create (all
 // green against /dev/null), an absent desired side a remove (all red), both
-// present an in-place update labeled a/<name> and b/<name>.
+// present an in-place update labeled a/<name> and b/<name>. `apply --dry-run`
+// uses this: the focus is the delta, so unchanged regions collapse to hunks.
 func renderUnitDiff(name, installed, desired string) string {
+	b, ops := startRender(name, installed, desired)
+	for _, h := range groupHunks(ops) {
+		oldStart, newStart := lineNumbers(ops, h.start)
+		body, oldCount, newCount := hunkBody(ops, h)
+		hdr := fmt.Sprintf("@@ -%s +%s @@", hunkRange(oldStart, oldCount), hunkRange(newStart, newCount))
+		b.WriteString(commentStyle.Render(hdr) + "\n")
+		b.WriteString(body)
+	}
+	return b.String()
+}
+
+// renderUnitFull renders the whole unit with drifted lines marked inline (-/+)
+// and no "@@" hunk headers: every line is shown as one span. `show` uses this
+// because the unit's full content is the point and drift is a secondary
+// annotation, unlike `apply --dry-run` where the delta is the whole focus.
+func renderUnitFull(name, installed, desired string) string {
+	b, ops := startRender(name, installed, desired)
+	writeLines(b, ops, hunk{0, len(ops)})
+	return b.String()
+}
+
+// startRender writes the "--- "/"+++ " header pair and returns the builder and
+// the computed ops so both render functions share the identical prologue.
+func startRender(name, installed, desired string) (*strings.Builder, []diffOp) {
 	var b strings.Builder
 	writeDiffHeader(&b, "--- ", "a/"+name, installed)
 	writeDiffHeader(&b, "+++ ", "b/"+name, desired)
-
 	ops := diffLines(splitLines(installed), splitLines(desired))
-	for _, h := range groupHunks(ops) {
-		writeHunk(&b, ops, h)
-	}
-	return b.String()
+	return &b, ops
 }
 
 // writeDiffHeader writes one "--- "/"+++ " header, anchoring an absent side
@@ -80,27 +101,34 @@ func groupHunks(ops []diffOp) []hunk {
 	return hs
 }
 
-func writeHunk(b *strings.Builder, ops []diffOp, h hunk) {
-	oldStart, newStart := lineNumbers(ops, h.start)
-	oldCount, newCount := 0, 0
-	var body strings.Builder
+// hunkBody renders the lines of a hunk and returns the colored output along
+// with the old and new line counts needed for @@ range formatting.
+func hunkBody(ops []diffOp, h hunk) (string, int, int) {
+	var b strings.Builder
+	oldCount, newCount := writeLines(&b, ops, h)
+	return b.String(), oldCount, newCount
+}
+
+// writeLines writes the colored diff lines of h directly into b and returns
+// the old and new line counts. Both renderUnitDiff (via hunkBody) and
+// renderUnitFull call this; the latter writes straight into the outer builder
+// so no intermediate string allocation is needed.
+func writeLines(b *strings.Builder, ops []diffOp, h hunk) (oldCount, newCount int) {
 	for _, op := range ops[h.start:h.end] {
 		switch op.kind {
 		case diffEqual:
 			oldCount++
 			newCount++
-			fmt.Fprintf(&body, " %s\n", op.line)
+			fmt.Fprintf(b, " %s\n", op.line)
 		case diffDelete:
 			oldCount++
-			body.WriteString(removeStyle.Render("-"+op.line) + "\n")
+			b.WriteString(removeStyle.Render("-"+op.line) + "\n")
 		case diffInsert:
 			newCount++
-			body.WriteString(addStyle.Render("+"+op.line) + "\n")
+			b.WriteString(addStyle.Render("+"+op.line) + "\n")
 		}
 	}
-	header := fmt.Sprintf("@@ -%s +%s @@", hunkRange(oldStart, oldCount), hunkRange(newStart, newCount))
-	b.WriteString(commentStyle.Render(header) + "\n")
-	b.WriteString(body.String())
+	return oldCount, newCount
 }
 
 // lineNumbers returns the 1-based old and new line numbers at op index idx.

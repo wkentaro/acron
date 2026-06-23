@@ -23,6 +23,14 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	owned, err := ownedJobs()
+	if err != nil {
+		return nil, err
+	}
+	installed := make(map[string]bool, len(owned))
+	for _, name := range owned {
+		installed[name] = true
+	}
 
 	plan := &Plan{}
 	desired := make(map[string]bool)
@@ -38,7 +46,11 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 		if unitsUnchanged(job.Name, service, timer) && isActive(job.Name) {
 			continue
 		}
-		plan.Applied = append(plan.Applied, job.Name)
+		if installed[job.Name] {
+			plan.Updated = append(plan.Updated, job.Name)
+		} else {
+			plan.Created = append(plan.Created, job.Name)
+		}
 		if dryRun {
 			continue
 		}
@@ -47,10 +59,6 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 		}
 	}
 
-	owned, err := ownedJobs()
-	if err != nil {
-		return nil, err
-	}
 	for _, name := range owned {
 		if desired[name] {
 			continue
@@ -64,18 +72,77 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 		}
 	}
 
-	if dryRun || (len(plan.Applied) == 0 && len(plan.Removed) == 0) {
+	if dryRun || plan.Empty() {
 		return plan, nil
 	}
 	if err := systemctl("daemon-reload"); err != nil {
 		return nil, err
 	}
-	for _, name := range plan.Applied {
+	converged := append(append([]string{}, plan.Created...), plan.Updated...)
+	for _, name := range converged {
 		if err := enableJob(name); err != nil {
 			return nil, fmt.Errorf("apply %s: %w", name, err)
 		}
 	}
 	return plan, nil
+}
+
+// Show reports a Job's generated units (rendered from the Config) alongside the
+// content installed on this machine and the Job's ApplyState, so the caller can
+// diff what apply would write against what is already there.
+func Show(cfg *config.Config, name string) (*JobUnits, error) {
+	self, err := paths.Self()
+	if err != nil {
+		return nil, err
+	}
+	base, err := snapshotEnv()
+	if err != nil {
+		return nil, err
+	}
+	installed, err := isOwned(name)
+	if err != nil {
+		return nil, err
+	}
+
+	job, ok := cfg.FindJob(name)
+	if !ok {
+		if !installed {
+			return nil, fmt.Errorf("no job named %q", name)
+		}
+		svcContent, err := readUnit(paths.ServicePath(name))
+		if err != nil {
+			return nil, err
+		}
+		tmrContent, err := readUnit(paths.TimerPath(name))
+		if err != nil {
+			return nil, err
+		}
+		return &JobUnits{Name: name, State: StateOrphaned, Units: []UnitFile{
+			{Name: paths.ServiceName(name), Installed: svcContent},
+			{Name: paths.TimerName(name), Installed: tmrContent},
+		}}, nil
+	}
+
+	state, err := jobApplyState(job, self, base, installed)
+	if err != nil {
+		return nil, err
+	}
+	service, timer, err := renderJob(job, self, base)
+	if err != nil {
+		return nil, err
+	}
+	svcContent, err := readUnit(paths.ServicePath(name))
+	if err != nil {
+		return nil, err
+	}
+	tmrContent, err := readUnit(paths.TimerPath(name))
+	if err != nil {
+		return nil, err
+	}
+	return &JobUnits{Name: name, State: state, Units: []UnitFile{
+		{Name: paths.ServiceName(name), Desired: service, Installed: svcContent},
+		{Name: paths.TimerName(name), Desired: timer, Installed: tmrContent},
+	}}, nil
 }
 
 func Destroy() (*Plan, error) {

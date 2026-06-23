@@ -24,6 +24,14 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	owned, err := ownedJobs()
+	if err != nil {
+		return nil, err
+	}
+	installed := make(map[string]bool, len(owned))
+	for _, name := range owned {
+		installed[name] = true
+	}
 
 	plan := &Plan{}
 	desired := make(map[string]bool)
@@ -39,7 +47,11 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 		if plistUnchanged(job.Name, plist) && isLoaded(job.Name) {
 			continue
 		}
-		plan.Applied = append(plan.Applied, job.Name)
+		if installed[job.Name] {
+			plan.Updated = append(plan.Updated, job.Name)
+		} else {
+			plan.Created = append(plan.Created, job.Name)
+		}
 		if dryRun {
 			continue
 		}
@@ -48,10 +60,6 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 		}
 	}
 
-	owned, err := ownedJobs()
-	if err != nil {
-		return nil, err
-	}
 	for _, name := range owned {
 		if desired[name] {
 			continue
@@ -65,6 +73,54 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 		}
 	}
 	return plan, nil
+}
+
+// Show reports a Job's generated plist (rendered from the Config) alongside the
+// content installed on this machine and the Job's ApplyState, so the caller can
+// diff what apply would write against what is already there.
+func Show(cfg *config.Config, name string) (*JobUnits, error) {
+	self, err := paths.Self()
+	if err != nil {
+		return nil, err
+	}
+	base, err := snapshotEnv()
+	if err != nil {
+		return nil, err
+	}
+	installed, err := isOwned(name)
+	if err != nil {
+		return nil, err
+	}
+
+	job, ok := cfg.FindJob(name)
+	if !ok {
+		if !installed {
+			return nil, fmt.Errorf("no job named %q", name)
+		}
+		plistContent, err := readUnit(paths.PlistPath(name))
+		if err != nil {
+			return nil, err
+		}
+		return &JobUnits{Name: name, State: StateOrphaned, Units: []UnitFile{
+			{Name: paths.PlistLabel(name), Installed: plistContent},
+		}}, nil
+	}
+
+	state, err := jobApplyState(job, self, base, installed)
+	if err != nil {
+		return nil, err
+	}
+	plist, err := renderJob(job, self, base)
+	if err != nil {
+		return nil, err
+	}
+	plistContent, err := readUnit(paths.PlistPath(name))
+	if err != nil {
+		return nil, err
+	}
+	return &JobUnits{Name: name, State: state, Units: []UnitFile{
+		{Name: paths.PlistLabel(name), Desired: plist, Installed: plistContent},
+	}}, nil
 }
 
 func Destroy() (*Plan, error) {

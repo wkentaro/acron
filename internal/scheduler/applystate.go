@@ -3,11 +3,39 @@
 package scheduler
 
 import (
+	"errors"
+	"io/fs"
+	"os"
 	"sort"
 
 	"github.com/wkentaro/acron/internal/config"
 	"github.com/wkentaro/acron/internal/paths"
 )
+
+// isOwned reports whether an acron-owned unit is installed for name, using the
+// same scan apply and ApplyStates use.
+func isOwned(name string) (bool, error) {
+	owned, err := ownedJobs()
+	if err != nil {
+		return false, err
+	}
+	for _, n := range owned {
+		if n == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// readUnit returns a unit file's content, or "" when the file does not exist.
+// Any other I/O error is returned to the caller.
+func readUnit(path string) (string, error) {
+	content, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	return string(content), nil
+}
 
 // ApplyStates reports each Job's ApplyState by performing the same comparison
 // apply does, read-only, plus any orphaned acron-owned units no longer in the

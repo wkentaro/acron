@@ -22,6 +22,10 @@ func ApplyStates(_ *config.Config) ([]JobState, error) {
 	return nil, errUnsupported
 }
 
+func Show(_ *config.Config, _ string) (*JobUnits, error) {
+	return nil, errUnsupported
+}
+
 func Trigger(_ string) error {
 	return errUnsupported
 }

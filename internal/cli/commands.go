@@ -106,6 +106,17 @@ func newStatusCmd() *cobra.Command {
 	}
 }
 
+func newShowCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "show <job>",
+		Short: "Show a job's generated unit and whether it matches what is installed",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runShow(args[0])
+		},
+	}
+}
+
 func newLogsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "logs <job> [run]",
@@ -166,7 +177,11 @@ func runApply(dryRun bool) error {
 	if err != nil {
 		return err
 	}
-	printPlan(plan, dryRun)
+	header := "Applied:"
+	if dryRun {
+		header = "Would apply:"
+	}
+	printPlan(plan, header)
 	return nil
 }
 
@@ -175,7 +190,7 @@ func runDestroy() error {
 	if err != nil {
 		return err
 	}
-	printPlan(plan, false)
+	printPlan(plan, "Destroyed:")
 	return nil
 }
 
@@ -273,6 +288,37 @@ func runStatus() error {
 	}
 	fmt.Print(renderStatusTable(t))
 	return nil
+}
+
+func runShow(name string) error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	units, err := scheduler.Show(cfg, name)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s  %s\n", cmdStyle.Render(units.Name), renderApplyState(units.State))
+	for _, unit := range units.Units {
+		fmt.Println()
+		fmt.Println(commentStyle.Render("# " + unit.Name))
+		fmt.Print(renderUnit(unit))
+	}
+	return nil
+}
+
+// renderUnit shows a unit's content, or a diff of installed against desired when
+// the two differ (drift). When only one side exists (unapplied has no installed,
+// orphaned has no desired), it shows that side.
+func renderUnit(unit scheduler.UnitFile) string {
+	if unit.Desired != "" && unit.Installed != "" && unit.Desired != unit.Installed {
+		return renderDiff(unit.Installed, unit.Desired)
+	}
+	if unit.Desired != "" {
+		return unit.Desired
+	}
+	return unit.Installed
 }
 
 // renderNext shows the schedule's next fire only for applied jobs, where the
@@ -622,18 +668,17 @@ func promptRetry(scanner *bufio.Scanner) (bool, error) {
 	return answer == "" || answer == "y" || answer == "yes", nil
 }
 
-func printPlan(plan *scheduler.Plan, dryRun bool) {
-	if len(plan.Applied) == 0 && len(plan.Removed) == 0 {
+func printPlan(plan *scheduler.Plan, header string) {
+	if plan.Empty() {
 		fmt.Println("Nothing to do.")
 		return
 	}
-	header := "Plan:"
-	if dryRun {
-		header = "Plan (dry run):"
-	}
 	fmt.Println(header)
-	for _, name := range plan.Applied {
+	for _, name := range plan.Created {
 		fmt.Printf("  %s %s\n", addStyle.Render("+"), name)
+	}
+	for _, name := range plan.Updated {
+		fmt.Printf("  %s %s\n", runningStyle.Render("~"), name)
 	}
 	for _, name := range plan.Removed {
 		fmt.Printf("  %s %s\n", removeStyle.Render("-"), name)

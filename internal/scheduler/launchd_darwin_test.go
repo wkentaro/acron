@@ -4,6 +4,7 @@ package scheduler
 
 import (
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -64,6 +65,109 @@ func TestPlistUnchanged(t *testing.T) {
 	}
 	if plistUnchanged("missing", "<plist>x</plist>") {
 		t.Error("expected changed when plist is absent")
+	}
+}
+
+func TestApplyDryRunPlan(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := os.MkdirAll(paths.LaunchAgentsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	job := func(name string) config.Job {
+		return config.Job{
+			Name: name, Schedule: "0 2 * * *", Agent: []string{"true"},
+			Prompt: "x", Cwd: "/tmp",
+		}
+	}
+	// "existing" has an installed plist, so apply would update it; "fresh" has
+	// none, so apply would create it; "ghost" is owned but undeclared, so it is
+	// pruned.
+	for _, name := range []string{"applydryrun-existing", "applydryrun-ghost"} {
+		if err := os.WriteFile(paths.PlistPath(name), []byte("stale"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := &config.Config{Jobs: []config.Job{job("applydryrun-fresh"), job("applydryrun-existing")}}
+
+	plan, err := Apply(cfg, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(plan.Created, []string{"applydryrun-fresh"}) {
+		t.Errorf("Created = %v, want [applydryrun-fresh]", plan.Created)
+	}
+	if !reflect.DeepEqual(plan.Updated, []string{"applydryrun-existing"}) {
+		t.Errorf("Updated = %v, want [applydryrun-existing]", plan.Updated)
+	}
+	if !reflect.DeepEqual(plan.Removed, []string{"applydryrun-ghost"}) {
+		t.Errorf("Removed = %v, want [applydryrun-ghost]", plan.Removed)
+	}
+}
+
+func TestShow(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := os.MkdirAll(paths.LaunchAgentsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	job := config.Job{
+		Name: "show-target", Schedule: "0 2 * * *", Agent: []string{"true"},
+		Prompt: "x", Cwd: "/tmp",
+	}
+	cfg := &config.Config{Jobs: []config.Job{job}}
+	self, err := paths.Self()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := snapshotEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plist, err := renderJob(job, self, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	units, err := Show(cfg, "show-target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if units.State != StateUnapplied {
+		t.Errorf("uninstalled state = %q, want unapplied", units.State)
+	}
+	if units.Units[0].Desired != plist || units.Units[0].Installed != "" {
+		t.Error("uninstalled plist: want desired set, installed empty")
+	}
+
+	if err := os.WriteFile(paths.PlistPath("show-target"), []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	units, err = Show(cfg, "show-target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if units.State != StateDrifted {
+		t.Errorf("stale state = %q, want drifted", units.State)
+	}
+	if units.Units[0].Installed != "stale" || units.Units[0].Desired != plist {
+		t.Errorf("drifted plist: got installed=%q desired set=%v", units.Units[0].Installed, units.Units[0].Desired == plist)
+	}
+
+	if err := os.WriteFile(paths.PlistPath("ghost"), []byte("<plist>x</plist>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	units, err = Show(cfg, "ghost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if units.State != StateOrphaned {
+		t.Errorf("ghost state = %q, want orphaned", units.State)
+	}
+	if units.Units[0].Desired != "" || units.Units[0].Installed != "<plist>x</plist>" {
+		t.Errorf("orphaned plist: got desired=%q installed=%q", units.Units[0].Desired, units.Units[0].Installed)
+	}
+
+	if _, err := Show(cfg, "nope"); err == nil {
+		t.Error("Show on unknown job: want error, got nil")
 	}
 }
 

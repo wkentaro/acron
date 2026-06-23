@@ -26,6 +26,21 @@ func loadConfig() (*config.Config, error) {
 	return loadAndValidate(config.DefaultPath())
 }
 
+func completeJobNames(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+	if len(args) != 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	cfg, err := loadConfig()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	names := make([]string, 0, len(cfg.Jobs))
+	for _, job := range cfg.Jobs {
+		names = append(names, job.Name+"\t"+job.Schedule)
+	}
+	return names, cobra.ShellCompDirectiveNoFileComp
+}
+
 func requireJob(name string) error {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -75,9 +90,10 @@ func newDestroyCmd() *cobra.Command {
 
 func newRunCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "run <job>",
-		Short: "Run a job now (the entry the scheduler invokes)",
-		Args:  cobra.ExactArgs(1),
+		Use:               "run <job>",
+		Short:             "Run a job now (the entry the scheduler invokes)",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeJobNames,
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runJob(args[0])
 		},
@@ -86,9 +102,10 @@ func newRunCmd() *cobra.Command {
 
 func newTriggerCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "trigger <job>",
-		Short: "Fire a job now, out of schedule, in the background",
-		Args:  cobra.ExactArgs(1),
+		Use:               "trigger <job>",
+		Short:             "Fire a job now, out of schedule, in the background",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeJobNames,
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runTrigger(args[0])
 		},
@@ -108,9 +125,10 @@ func newStatusCmd() *cobra.Command {
 
 func newShowCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "show <job>",
-		Short: "Show a job's generated unit and whether it matches what is installed",
-		Args:  cobra.ExactArgs(1),
+		Use:               "show <job>",
+		Short:             "Show a job's generated unit and whether it matches what is installed",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeJobNames,
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runShow(args[0])
 		},
@@ -120,9 +138,10 @@ func newShowCmd() *cobra.Command {
 func newLogsCmd() *cobra.Command {
 	var follow bool
 	cmd := &cobra.Command{
-		Use:   "logs <job> [run]",
-		Short: "Show a job's captured output",
-		Args:  cobra.RangeArgs(1, 2),
+		Use:               "logs <job> [run]",
+		Short:             "Show a job's captured output",
+		Args:              cobra.RangeArgs(1, 2),
+		ValidArgsFunction: completeJobNames,
 		Example: `
 acron logs nightly-triage                       # Newest run (same as "latest")
 acron logs nightly-triage latest                # Newest run explicitly
@@ -147,9 +166,10 @@ acron logs nightly-triage --follow              # Stream the run in progress unt
 
 func newHistoryCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "history [job]",
-		Short: "List past runs",
-		Args:  cobra.MaximumNArgs(1),
+		Use:               "history [job]",
+		Short:             "List past runs",
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: completeJobNames,
 		Example: `
 acron history                 # All jobs
 acron history nightly-triage  # One job

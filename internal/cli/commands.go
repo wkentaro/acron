@@ -34,11 +34,61 @@ func completeJobNames(_ *cobra.Command, args []string, _ string) ([]string, cobr
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	names := make([]string, 0, len(cfg.Jobs))
+	candidates := make([]string, 0, len(cfg.Jobs))
 	for _, job := range cfg.Jobs {
-		names = append(names, job.Name)
+		candidate := job.Name
+		if hint := completionHint(job); hint != "" {
+			candidate = cobra.CompletionWithDesc(candidate, hint)
+		}
+		candidates = append(candidates, candidate)
 	}
-	return names, cobra.ShellCompDirectiveNoFileComp
+	return candidates, cobra.ShellCompDirectiveNoFileComp
+}
+
+func completionHint(job config.Job) string {
+	hint := promptHint(job.Prompt)
+	if hint == "" {
+		return ""
+	}
+	// Truncate the prompt before appending the cwd basename so the basename,
+	// which disambiguates jobs that share a prompt, always survives.
+	hint = truncateHint(hint)
+	if cwd := cwdHint(job.Cwd); cwd != "" {
+		hint += " — " + cwd
+	}
+	return hint
+}
+
+// promptHint is selection help, not a second authored description field.
+func promptHint(prompt string) string {
+	for prompt != "" {
+		line, rest, _ := strings.Cut(prompt, "\n")
+		if hint := strings.Join(strings.Fields(line), " "); hint != "" {
+			return hint
+		}
+		prompt = rest
+	}
+	return ""
+}
+
+func cwdHint(cwd string) string {
+	base := filepath.Base(paths.ExpandHome(cwd))
+	if base == "." || base == "/" {
+		return ""
+	}
+	return base
+}
+
+func truncateHint(hint string) string {
+	const limit = 56
+	if len(hint) <= limit { // fast path: byte length is an upper bound on rune count
+		return hint
+	}
+	runes := []rune(hint)
+	if len(runes) <= limit {
+		return hint
+	}
+	return string(runes[:limit-1]) + "…"
 }
 
 func requireJob(name string) error {

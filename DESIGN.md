@@ -56,7 +56,7 @@ points acron at it via `ACRON_CONFIG=<repo>/acron_config.toml` (ADR-0003).
 [[job]]
 name     = "nightly-triage"   # required, unique, [a-z0-9_-]
 schedule = "0 2 * * *"        # required, 5-field cron (calendar semantics)
-agent    = ["claude", "-p", "{prompt}", "--dangerously-skip-permissions"]
+agent    = ["claude", "-p", "{prompt}", "--dangerously-skip-permissions", "--verbose", "--output-format", "stream-json"]
 prompt   = "Triage open issues"  # required
 cwd      = "~/src/acron"      # required, absolute or ~-expanded
 enabled  = true               # optional, default true

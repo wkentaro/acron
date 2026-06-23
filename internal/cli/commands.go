@@ -497,7 +497,7 @@ func logByTimestamp(job, timestamp string, records []runner.Record) (string, err
 // wall-clock, matching how runs are displayed and how log files are named.
 func parseSelectorTime(timestamp string) (time.Time, bool) {
 	timestamp = strings.TrimSuffix(timestamp, ".log")
-	for _, layout := range []string{displayTimeFormat, "2006-01-02T15-04-05"} {
+	for _, layout := range []string{displayTimeFormat, runner.LogTimestampLayout} {
 		if t, err := time.ParseInLocation(layout, timestamp, time.Local); err == nil {
 			return t, true
 		}

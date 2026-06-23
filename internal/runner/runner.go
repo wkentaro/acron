@@ -54,6 +54,7 @@ type Result struct {
 	Exit     int
 	Duration time.Duration
 	LogPath  string
+	Command  []string // resolved agent argv, nil when the agent never ran
 }
 
 type Record struct {
@@ -103,8 +104,9 @@ func runAgent(job config.Job, timeout time.Duration, lock *os.File) (Result, err
 	defer func() { _ = logFile.Close() }()
 	recordLiveLog(lock, logName)
 
-	exit, status := execAgent(job, timeout, io.MultiWriter(logFile, os.Stdout))
-	return finishRun(job.Name, start, status, ReasonNone, exit, logName)
+	argv := substitutePrompt(job.Agent, job.Prompt)
+	exit, status := execAgent(argv, job, timeout, io.MultiWriter(logFile, os.Stdout))
+	return finishRun(job.Name, start, status, ReasonNone, exit, logName, argv)
 }
 
 func recordSkipped(job string, reason Reason) (Result, error) {
@@ -117,7 +119,7 @@ func recordSkipped(job string, reason Reason) (Result, error) {
 	return Result{Status: StatusSkipped, Reason: reason}, nil
 }
 
-func finishRun(job string, start time.Time, status Status, reason Reason, exit int, logName string) (Result, error) {
+func finishRun(job string, start time.Time, status Status, reason Reason, exit int, logName string, argv []string) (Result, error) {
 	duration := time.Since(start)
 	rec := Record{
 		Start:     start.Format(time.RFC3339),
@@ -138,11 +140,12 @@ func finishRun(job string, start time.Time, status Status, reason Reason, exit i
 		Exit:     exit,
 		Duration: duration,
 		LogPath:  filepath.Join(paths.RunsDir(job), logName),
+		Command:  argv,
 	}, nil
 }
 
-func execAgent(job config.Job, timeout time.Duration, out io.Writer) (int, Status) {
-	exit, timedOut, err := runCmd(substitutePrompt(job.Agent, job.Prompt), job, timeout, out)
+func execAgent(argv []string, job config.Job, timeout time.Duration, out io.Writer) (int, Status) {
+	exit, timedOut, err := runCmd(argv, job, timeout, out)
 	switch {
 	case err == nil:
 		return 0, StatusSuccess
@@ -251,7 +254,7 @@ func recordConditionFailure(job string, start time.Time, exit int, output []byte
 	if err := os.WriteFile(filepath.Join(runsDir, logName), output, 0o644); err != nil {
 		return Result{}, err
 	}
-	return finishRun(job, start, StatusFailure, ReasonCondition, exit, logName)
+	return finishRun(job, start, StatusFailure, ReasonCondition, exit, logName, nil)
 }
 
 func acquireLock(job string) (*os.File, bool, error) {

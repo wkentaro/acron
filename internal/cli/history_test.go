@@ -226,6 +226,22 @@ func TestRunHistorySkippedShowsDashDuration(t *testing.T) {
 	}
 }
 
+func TestRunHistorySkipWithOutputIsAnnotated(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	seedConfig(t, "job")
+	seedRuns(t, "job", []runner.Record{
+		{Start: "2026-06-22T00:00:00Z", Status: runner.StatusSkipped, Reason: runner.ReasonCondition, Log: "2026-06-22T00-00-00.log"},
+	})
+
+	out, err := captureStdout(t, func() error { return runHistory("job", 0) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "skipped (condition, output)") {
+		t.Errorf("a skip carrying a log should be annotated for `acron logs`: %q", out)
+	}
+}
+
 func TestRunHistoryShowsHumanTimestampsNotFilenames(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	seedConfig(t, "job")

@@ -18,6 +18,7 @@ var (
 	addStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))            // green
 	removeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))            // red
 	runningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))            // yellow
+	warnStyle    = runningStyle                                                   // yellow, reused for a suspect skip
 )
 
 type row struct {

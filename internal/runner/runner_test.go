@@ -1,8 +1,10 @@
 package runner
 
 import (
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -188,6 +190,59 @@ func TestRunConditionSkips(t *testing.T) {
 	}
 }
 
+func TestRunConditionSkipWithStdoutOnlyStaysClean(t *testing.T) {
+	job := echoJob(t)
+	// A chatty-but-working gate, e.g. `jq -e 'length > 0'` printing `false` on
+	// the negative case: stdout output, no stderr, an ordinary skip.
+	job.Condition = []string{"/bin/sh", "-c", "echo false; exit 1"}
+
+	result, err := Run(job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != StatusSkipped || result.Reason != ReasonCondition {
+		t.Fatalf("got status=%s reason=%s, want skipped/condition", result.Status, result.Reason)
+	}
+	if result.LogPath != "" {
+		t.Errorf("stdout-only skip wrote a log: %s", result.LogPath)
+	}
+	if logs := logFiles(t, job.Name); len(logs) != 0 {
+		t.Errorf("stdout-only skip left log files: %v", logs)
+	}
+}
+
+func TestRunConditionSkipWithStderrWritesLog(t *testing.T) {
+	job := echoJob(t)
+	job.Condition = []string{"/bin/sh", "-c", "echo gh auth login >&2; exit 2"}
+
+	result, err := Run(job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != StatusSkipped || result.Reason != ReasonCondition {
+		t.Fatalf("got status=%s reason=%s, want skipped/condition", result.Status, result.Reason)
+	}
+
+	last, ok, err := LastRecord(job.Name)
+	if err != nil || !ok {
+		t.Fatalf("LastRecord ok=%v err=%v", ok, err)
+	}
+	if last.Log == "" {
+		t.Fatal("skip with output left no log reference on the record")
+	}
+	if last.Exit != 2 {
+		t.Errorf("recorded exit = %d, want 2 (the broken condition's exit)", last.Exit)
+	}
+
+	data, err := os.ReadFile(result.LogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "gh auth login") {
+		t.Errorf("log = %q, want it to contain the condition output", string(data))
+	}
+}
+
 func TestRunConditionFailureWritesLog(t *testing.T) {
 	job := echoJob(t)
 	job.Condition = []string{"/bin/sh", "-c", "echo broke >&2; exit 255"}
@@ -269,6 +324,118 @@ func TestRetentionSkipsDoNotEvictRealRuns(t *testing.T) {
 	}
 	if skip != keepRuns {
 		t.Errorf("kept %d skips, want %d", skip, keepRuns)
+	}
+}
+
+func TestPruneRunsKeepsRealLogsDespiteSkipFlood(t *testing.T) {
+	job := echoJob(t)
+	runsDir := paths.RunsDir(job.Name)
+	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeRun := func(status Status, log string) {
+		if err := os.WriteFile(filepath.Join(runsDir, log), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_ = appendHistory(job.Name, Record{Status: status, Log: log})
+	}
+
+	var realLogs []string
+	for i := 0; i < keepRuns; i++ {
+		name := fmt.Sprintf("real-%02d.log", i)
+		realLogs = append(realLogs, name)
+		writeRun(StatusSuccess, name)
+	}
+	for i := 0; i < keepRuns+5; i++ {
+		writeRun(StatusSkipped, fmt.Sprintf("skip-%02d.log", i))
+	}
+
+	pruneRuns(job.Name)
+
+	for _, name := range realLogs {
+		if _, err := os.Stat(filepath.Join(runsDir, name)); err != nil {
+			t.Errorf("real-run log %s evicted by skip-log flood: %v", name, err)
+		}
+	}
+	if got := len(logFiles(t, job.Name)); got != keepRuns*2 {
+		t.Errorf("kept %d log files, want %d (50 real + 50 skip)", got, keepRuns*2)
+	}
+}
+
+func TestPruneRunsKeepsLogsWhenHistoryMissing(t *testing.T) {
+	job := echoJob(t)
+	runsDir := paths.RunsDir(job.Name)
+	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runsDir, "orphan.log"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	pruneRuns(job.Name)
+
+	if logs := logFiles(t, job.Name); len(logs) != 1 {
+		t.Errorf("pruned logs with no history present: kept %v, want [orphan.log]", logs)
+	}
+}
+
+func TestRecordSkippedPrunesEvictedSkipLog(t *testing.T) {
+	job := echoJob(t)
+	runsDir := paths.RunsDir(job.Name)
+	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Fill the skip bucket to its cap with logged condition-skips on disk.
+	for i := 0; i < keepRuns; i++ {
+		log := fmt.Sprintf("skip-%02d.log", i)
+		if err := os.WriteFile(filepath.Join(runsDir, log), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_ = appendHistory(job.Name, Record{Status: StatusSkipped, Reason: ReasonCondition, Log: log})
+	}
+	oldest := filepath.Join(runsDir, "skip-00.log")
+
+	// One more logless skip evicts the oldest logged skip from history; its log
+	// must be pruned, not orphaned on disk.
+	if _, err := recordSkipped(job.Name, ReasonOverlap); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(oldest); !os.IsNotExist(err) {
+		t.Errorf("evicted skip log was not pruned: stat err = %v", err)
+	}
+}
+
+func TestPruneRunsKeepsInflightLiveLog(t *testing.T) {
+	job := echoJob(t)
+	runsDir := paths.RunsDir(job.Name)
+	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A prior recorded run, so pruneRuns does not bail on an empty kept set.
+	if err := os.WriteFile(filepath.Join(runsDir, "done.log"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = appendHistory(job.Name, Record{Status: StatusSuccess, Log: "done.log"})
+
+	// An in-flight Run: its log is on disk and stamped live in the lock file, but
+	// its history record does not exist yet (finishRun has not run).
+	live := "2026-06-24T12-00-00.log"
+	if err := os.WriteFile(filepath.Join(runsDir, live), []byte("partial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(paths.LocksDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stampLiveLog(t, job.Name, live)
+
+	// A concurrent overlap-skip prunes; it must not delete the running agent's log.
+	if _, err := recordSkipped(job.Name, ReasonOverlap); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(runsDir, live)); err != nil {
+		t.Errorf("pruneRuns deleted the in-flight live log: %v", err)
 	}
 }
 

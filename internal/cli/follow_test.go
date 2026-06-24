@@ -191,6 +191,7 @@ func TestFollowFooter(t *testing.T) {
 		{"timeout", runner.Record{Status: runner.StatusTimeout, Exit: -1, DurationS: 1800}, "run timeout in 30min"},
 		{"condition failure", runner.Record{Status: runner.StatusFailure, Reason: runner.ReasonCondition, Exit: 2}, "run failure (condition, exit 2) in 0s"},
 		{"skipped", runner.Record{Status: runner.StatusSkipped, Reason: runner.ReasonCondition}, "run skipped (condition)"},
+		{"skip with output", runner.Record{Status: runner.StatusSkipped, Reason: runner.ReasonCondition, Exit: 2, Log: "x.log"}, "run skipped (condition, output)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

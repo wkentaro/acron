@@ -309,7 +309,7 @@ func runJob(name string) error {
 		return err
 	}
 	fmt.Printf("%s  %s  exit %d  %s\n",
-		renderStatus(result.Status, result.Reason), name, result.Exit, result.Duration.Round(time.Second))
+		renderStatus(result.Status, result.Reason, result.LogPath), name, result.Exit, result.Duration.Round(time.Second))
 	if len(result.Command) > 0 {
 		fmt.Println(commentStyle.Render(renderCommand(result.Command)))
 	}
@@ -520,7 +520,7 @@ func renderLastRun(job string, now time.Time) (status, last, passed string, err 
 	if !ok {
 		return commentStyle.Render("never run"), "", "", nil
 	}
-	status = renderStatus(rec.Status, rec.Reason)
+	status = renderStatus(rec.Status, rec.Reason, rec.Log)
 	start, parseErr := time.Parse(time.RFC3339, rec.Start)
 	if parseErr != nil {
 		return status, commentStyle.Render(rec.Start), "", nil
@@ -556,7 +556,7 @@ func renderLogSummary(job string, rec runner.Record, running bool, now time.Time
 		start, _ := time.Parse(time.RFC3339, rec.Start)
 		tail = "running for " + formatDuration(now.Sub(start))
 	} else {
-		status = renderStatus(rec.Status, rec.Reason)
+		status = renderStatus(rec.Status, rec.Reason, rec.Log)
 		tail = "in " + formatDuration(recDuration(rec))
 	}
 	return strings.Join([]string{
@@ -691,7 +691,14 @@ func followFooter(rec runner.Record) string {
 	if rec.Reason != "" {
 		notes = append(notes, string(rec.Reason))
 	}
-	if rec.Exit > 0 {
+	if rec.Status == runner.StatusSkipped {
+		// Mirror renderStatus: a skip's recorded exit is the condition's, not the
+		// agent's (which never ran), so a log is the honest "this skip is suspect"
+		// signal, the same "output" annotation the history table and status cell show.
+		if rec.Log != "" {
+			notes = append(notes, "output")
+		}
+	} else if rec.Exit > 0 {
 		notes = append(notes, fmt.Sprintf("exit %d", rec.Exit))
 	}
 	msg := "run " + string(rec.Status)
@@ -787,7 +794,7 @@ func runHistory(name string, limit int) error {
 	t := historyTable()
 	for _, run := range runs {
 		when, passed := renderRunWhen(run.rec, run.start, now)
-		status := renderStatus(run.rec.Status, run.rec.Reason)
+		status := renderStatus(run.rec.Status, run.rec.Reason, run.rec.Log)
 		duration := renderRunDuration(run.rec)
 		if run.running {
 			status = runningStyle.Render("running")
@@ -1108,12 +1115,26 @@ func renderPlanChange(symbol, name string, change scheduler.PlanChange) string {
 	return header + strings.Join(diffs, "\n")
 }
 
-func renderStatus(status runner.Status, reason runner.Reason) string {
-	label := string(status)
+// A skip that left a log is a condition skip whose check wrote to stderr, which
+// almost always means the check broke (an unauthenticated gh, a typo'd command);
+// it is lifted out of the dim skip style and annotated so it stands out from
+// clean skips while scanning, pointing at `acron logs`. log is empty for clean
+// skips, which stay dim.
+func renderStatus(status runner.Status, reason runner.Reason, log string) string {
+	var notes []string
 	if reason != "" {
-		label += " (" + string(reason) + ")"
+		notes = append(notes, string(reason))
 	}
-	return statusStyle(status).Render(label)
+	style := statusStyle(status)
+	if status == runner.StatusSkipped && log != "" {
+		notes = append(notes, "output")
+		style = warnStyle
+	}
+	label := string(status)
+	if len(notes) > 0 {
+		label += " (" + strings.Join(notes, ", ") + ")"
+	}
+	return style.Render(label)
 }
 
 func renderCommand(argv []string) string {

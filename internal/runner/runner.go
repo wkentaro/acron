@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -115,7 +114,10 @@ func recordSkipped(job string, reason Reason) (Result, error) {
 	if err := appendHistory(job, rec); err != nil {
 		return Result{}, err
 	}
-	trimHistory(job)
+	// Prune, not just trim: a flood of logless skips can evict an older
+	// condition-skip record that did carry a log, and pruneRuns deletes that
+	// now-unreferenced log file. trimHistory alone would orphan it on disk.
+	pruneRuns(job)
 	return Result{Status: StatusSkipped, Reason: reason}, nil
 }
 
@@ -145,7 +147,7 @@ func finishRun(job string, start time.Time, status Status, reason Reason, exit i
 }
 
 func execAgent(argv []string, job config.Job, timeout time.Duration, out io.Writer) (int, Status) {
-	exit, timedOut, err := runCmd(argv, job, timeout, out)
+	exit, timedOut, err := runCmd(argv, job, timeout, out, out)
 	switch {
 	case err == nil:
 		return 0, StatusSuccess
@@ -156,11 +158,13 @@ func execAgent(argv []string, job config.Job, timeout time.Duration, out io.Writ
 	}
 }
 
-// runCmd executes argv with the Job's cwd and env, sending combined output to
-// out, bounded by timeout (SIGTERM, then SIGKILL after killGrace). It returns
-// the process exit code (-1 if it never produced one), whether the timeout
-// fired, and the run error.
-func runCmd(argv []string, job config.Job, timeout time.Duration, out io.Writer) (int, bool, error) {
+// runCmd executes argv with the Job's cwd and env, sending stdout and stderr to
+// the given writers, bounded by timeout (SIGTERM, then SIGKILL after killGrace).
+// Passing one writer for both (as the agent does) interleaves the streams as a
+// terminal would; passing separate writers (as the condition check does) keeps
+// them apart so stderr can be told from stdout. It returns the process exit code
+// (-1 if it never produced one), whether the timeout fired, and the run error.
+func runCmd(argv []string, job config.Job, timeout time.Duration, stdout, stderr io.Writer) (int, bool, error) {
 	ctx := context.Background()
 	cancel := func() {}
 	if timeout > 0 {
@@ -172,8 +176,8 @@ func runCmd(argv []string, job config.Job, timeout time.Duration, out io.Writer)
 	cmd.Dir = paths.ExpandHome(job.Cwd)
 	cmd.Env = jobEnv(job)
 	cmd.Stdin = nil // nil stdin connects the child to /dev/null
-	cmd.Stdout = out
-	cmd.Stderr = out
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = killGrace // SIGKILL if it ignores SIGTERM within the grace period
 
@@ -211,14 +215,24 @@ func evalCondition(job config.Job, timeout time.Duration) (Result, bool, error) 
 	}
 
 	start := time.Now()
-	var buf bytes.Buffer
-	exit, outcome := execCondition(job, timeout, &buf)
+	var stdout, stderr bytes.Buffer
+	exit, outcome := execCondition(job, timeout, &stdout, &stderr)
 	switch outcome {
 	case conditionSkip:
-		result, err := recordSkipped(job.Name, ReasonCondition)
+		// A well-behaved gate is a quiet predicate (test, grep -q) or prints its
+		// result to stdout (jq -e emits `false` on the negative case), so stdout
+		// alone is an ordinary skip and records nothing extra, like an overlap
+		// skip. Output on stderr is the tell of broken tooling (command-not-found
+		// exit 127, an unauthenticated gh, a `test: integer expected` exit 2), so
+		// preserve it to a log surfaced via `acron logs`.
+		if stderr.Len() == 0 {
+			result, err := recordSkipped(job.Name, ReasonCondition)
+			return result, false, err
+		}
+		result, err := recordConditionOutcome(job.Name, start, StatusSkipped, exit, combinedOutput(&stdout, &stderr))
 		return result, false, err
 	case conditionFail:
-		result, err := recordConditionFailure(job.Name, start, exit, buf.Bytes())
+		result, err := recordConditionOutcome(job.Name, start, StatusFailure, exit, combinedOutput(&stdout, &stderr))
 		return result, false, err
 	default:
 		fmt.Printf("condition passed %s\n", job.Name)
@@ -226,11 +240,21 @@ func evalCondition(job config.Job, timeout time.Duration) (Result, bool, error) 
 	}
 }
 
+// combinedOutput joins a condition's captured streams for its log. The streams
+// are buffered separately so stderr can be told from stdout, so the log is
+// stdout-then-stderr rather than emission-interleaved; for the short predicates
+// a gate runs this is a non-issue, and the streams rarely overlap.
+func combinedOutput(stdout, stderr *bytes.Buffer) []byte {
+	out := make([]byte, 0, stdout.Len()+stderr.Len())
+	out = append(out, stdout.Bytes()...)
+	return append(out, stderr.Bytes()...)
+}
+
 // execCondition runs the condition command and maps its exit to an outcome,
 // mirroring systemd ExecCondition=: 0 proceeds, 1-254 is a clean skip, and 255
 // or death by signal/timeout is a failure (the check itself is broken).
-func execCondition(job config.Job, timeout time.Duration, out io.Writer) (int, conditionOutcome) {
-	exit, timedOut, err := runCmd(job.Condition, job, timeout, out)
+func execCondition(job config.Job, timeout time.Duration, stdout, stderr io.Writer) (int, conditionOutcome) {
+	exit, timedOut, err := runCmd(job.Condition, job, timeout, stdout, stderr)
 	switch {
 	case err == nil:
 		return 0, conditionProceed
@@ -243,9 +267,11 @@ func execCondition(job config.Job, timeout time.Duration, out io.Writer) (int, c
 	}
 }
 
-// recordConditionFailure records a Run where the condition check itself broke.
-// Unlike a clean skip, its output is worth keeping, so it writes a log file.
-func recordConditionFailure(job string, start time.Time, exit int, output []byte) (Result, error) {
+// recordConditionOutcome records a Run produced by the condition check rather
+// than the agent, preserving the condition's captured output in a log file so
+// the reason (a broken check, or a skip whose tooling misfired) is discoverable
+// via `acron logs`.
+func recordConditionOutcome(job string, start time.Time, status Status, exit int, output []byte) (Result, error) {
 	runsDir := paths.RunsDir(job)
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
 		return Result{}, err
@@ -254,7 +280,7 @@ func recordConditionFailure(job string, start time.Time, exit int, output []byte
 	if err := os.WriteFile(filepath.Join(runsDir, logName), output, 0o644); err != nil {
 		return Result{}, err
 	}
-	return finishRun(job, start, StatusFailure, ReasonCondition, exit, logName, nil)
+	return finishRun(job, start, status, ReasonCondition, exit, logName, nil)
 }
 
 func acquireLock(job string) (*os.File, bool, error) {
@@ -433,33 +459,58 @@ func LastRecord(job string) (Record, bool, error) {
 	return records[len(records)-1], true, nil
 }
 
+// pruneRuns trims the history to its retention caps, then deletes every log file
+// no surviving record still references. Tying the on-disk logs to the kept
+// records (rather than to a flat file count) lets retainHistory's independent
+// real/skip caps stay authoritative: a flood of skip logs can never evict a real
+// Run's log from disk while its record still lives in history. It deletes off the
+// in-memory kept set trimHistory returns, so a failed history rewrite never
+// causes a still-referenced log to be pruned; an empty kept set (the history is
+// gone or unwritten) bails rather than deleting every log it cannot account for.
+// An in-flight Run's live log, on disk but not yet in any record, is kept too.
 func pruneRuns(job string) {
+	kept, ok := trimHistory(job)
+	if !ok || len(kept) == 0 {
+		return
+	}
+	referenced := make(map[string]bool, len(kept)+1)
+	for _, rec := range kept {
+		if rec.Log != "" {
+			referenced[rec.Log] = true
+		}
+	}
+	// An in-flight Run's log is on disk (runAgent creates it) before its history
+	// record exists (finishRun writes it last), so a concurrent overlap-skip's
+	// prune would delete the log the running agent is still streaming to. The lock
+	// file names that live log; keep it referenced until the record lands.
+	if live := liveLogName(job); live != "" {
+		referenced[live] = true
+	}
 	dir := paths.RunsDir(job)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
-	var logs []string
 	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".log") {
-			logs = append(logs, entry.Name())
+		name := entry.Name()
+		if strings.HasSuffix(name, ".log") && !referenced[name] {
+			_ = os.Remove(filepath.Join(dir, name))
 		}
 	}
-	sort.Strings(logs)
-	for _, name := range logs[:max(0, len(logs)-keepRuns)] {
-		_ = os.Remove(filepath.Join(dir, name))
-	}
-	trimHistory(job)
 }
 
-func trimHistory(job string) {
+// trimHistory caps the on-disk history to its retention limits and returns the
+// records it kept. ok is false only when the history could not be read, so a
+// caller (pruneRuns) can tell an empty history from an unreadable one and avoid
+// pruning logs it cannot account for.
+func trimHistory(job string) (kept []Record, ok bool) {
 	records, err := History(job)
 	if err != nil {
-		return
+		return nil, false
 	}
-	kept := retainHistory(records)
+	kept = retainHistory(records)
 	if len(kept) == len(records) {
-		return
+		return kept, true
 	}
 	var b strings.Builder
 	for _, rec := range kept {
@@ -467,7 +518,10 @@ func trimHistory(job string) {
 		b.Write(line)
 		b.WriteByte('\n')
 	}
-	_ = os.WriteFile(paths.HistoryPath(job), []byte(b.String()), 0o644)
+	if err := os.WriteFile(paths.HistoryPath(job), []byte(b.String()), 0o644); err != nil {
+		return nil, false
+	}
+	return kept, true
 }
 
 // retainHistory keeps the last keepRuns real Runs and, independently, the last

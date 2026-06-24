@@ -92,6 +92,22 @@ func TestResolveLogLatestSkipsRunsWithoutOutput(t *testing.T) {
 	}
 }
 
+func TestResolveLogLatestSurfacesConditionSkipOutput(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	seedRuns(t, "job", []runner.Record{
+		{Start: "2026-06-22T00:00:00Z", Status: runner.StatusSuccess, Log: "2026-06-22T00-00-00.log"},
+		{Start: "2026-06-22T01:00:00Z", Status: runner.StatusSkipped, Reason: runner.ReasonCondition, Log: "2026-06-22T01-00-00.log"},
+	})
+
+	rec, _, err := resolveLog("job", "latest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Log != "2026-06-22T01-00-00.log" {
+		t.Errorf("got %q, want the broken condition's output surfaced as the latest log", rec.Log)
+	}
+}
+
 func TestResolveLogAllSkipped(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	seedRuns(t, "job", []runner.Record{

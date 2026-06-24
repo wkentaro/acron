@@ -66,6 +66,29 @@ func TestRunFailureRecordsExit(t *testing.T) {
 	}
 }
 
+func TestRunPassesJobEnvToAgent(t *testing.T) {
+	job := echoJob(t)
+	job.Agent = []string{"/bin/sh", "-c", "echo $ACRON_TEST_VAR"}
+	t.Setenv("ACRON_TEST_VAR", "inherited")
+	job.Env = map[string]string{"ACRON_TEST_VAR": "sentinel"}
+
+	result, err := Run(context.Background(), job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != StatusSuccess {
+		t.Fatalf("got status=%s, want success", result.Status)
+	}
+
+	data, err := os.ReadFile(result.LogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(data); got != "sentinel\n" {
+		t.Errorf("log = %q, want %q", got, "sentinel\n")
+	}
+}
+
 func TestRunSkipsWhenLocked(t *testing.T) {
 	job := echoJob(t)
 

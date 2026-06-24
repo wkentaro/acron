@@ -102,12 +102,16 @@ func runAgent(ctx context.Context, job config.Job, timeout time.Duration, lock *
 
 	start := time.Now()
 	logName := start.Format(LogTimestampLayout) + ".log"
+	// Stamp the live-log name before the file exists on disk, so it is never a
+	// deletion candidate that a concurrent overlap-skip's prune cannot see as
+	// live. The follower tolerates this gap (the stamp may briefly name a file
+	// not yet created); pruneRuns only ever deletes files already on disk.
+	recordLiveLog(lock, logName)
 	logFile, err := os.Create(filepath.Join(runsDir, logName))
 	if err != nil {
 		return Result{}, err
 	}
 	defer func() { _ = logFile.Close() }()
-	recordLiveLog(lock, logName)
 
 	argv := substitutePrompt(job.Agent, job.Prompt)
 	exit, status := execAgent(ctx, argv, job, timeout, io.MultiWriter(logFile, os.Stdout))
@@ -517,10 +521,12 @@ func pruneRuns(job string) {
 			referenced[rec.Log] = true
 		}
 	}
-	// An in-flight Run's log is on disk (runAgent creates it) before its history
-	// record exists (finishRun writes it last), so a concurrent overlap-skip's
-	// prune would delete the log the running agent is still streaming to. The lock
-	// file names that live log; keep it referenced until the record lands.
+	// An in-flight Run stamps its live-log name into the lock before it creates the
+	// file, and well before finishRun writes the record, so a concurrent
+	// overlap-skip's prune would delete the log the running agent is still
+	// streaming to. The lock file names that live log; keep it referenced until the
+	// record lands. The stamp can briefly name a file not yet on disk, which is
+	// harmless: prune only deletes files it actually finds in the directory.
 	if live := liveLogName(job); live != "" {
 		referenced[live] = true
 	}

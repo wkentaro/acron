@@ -634,10 +634,41 @@ func awaitLiveLog(job string) (string, bool) {
 	}
 }
 
+// openLiveLog opens the in-flight Run's agent log, waiting for the file to
+// appear. runAgent stamps the live-log name into the lock before it creates the
+// file, so awaitLiveLog can hand back a name a beat before the file exists; this
+// polls past that gap rather than failing on the transient absence. It returns
+// opened=false if the Run ends before the file ever appears (log creation
+// failed after the stamp), so the caller can fall back to the recorded result.
+func openLiveLog(job, logName string) (*os.File, bool, error) {
+	path := filepath.Join(paths.RunsDir(job), logName)
+	for {
+		file, err := os.Open(path)
+		if err == nil {
+			return file, true, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, false, err
+		}
+		// The file is not there yet. Keep waiting only while this same Run still
+		// holds the lock and stamps this name; if it released the lock or a later
+		// Run took over the stamp, the file we were promised will never appear.
+		if live, running := runner.InFlight(job); !running || live != logName {
+			return nil, false, nil
+		}
+		time.Sleep(followPollInterval)
+	}
+}
+
 func streamLiveLog(job, logName string) error {
-	f, err := os.Open(filepath.Join(paths.RunsDir(job), logName))
+	f, opened, err := openLiveLog(job, logName)
 	if err != nil {
 		return err
+	}
+	if !opened {
+		// The Run ended before its agent log file appeared (its creation failed
+		// right after the live-log stamp), so fall back to the recorded result.
+		return followFinished(job)
 	}
 	defer func() { _ = f.Close() }()
 

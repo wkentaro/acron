@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -433,33 +432,50 @@ func LastRecord(job string) (Record, bool, error) {
 	return records[len(records)-1], true, nil
 }
 
+// pruneRuns trims the history to its retention caps, then deletes every log file
+// no surviving record still references. Tying the on-disk logs to the kept
+// records (rather than to a flat file count) lets retainHistory's independent
+// real/skip caps stay authoritative: a flood of skip logs can never evict a real
+// Run's log from disk while its record still lives in history. It deletes off the
+// in-memory kept set trimHistory returns, so a failed history rewrite never
+// causes a still-referenced log to be pruned; an empty kept set (the history is
+// gone or unwritten) bails rather than deleting every log it cannot account for.
 func pruneRuns(job string) {
+	kept, ok := trimHistory(job)
+	if !ok || len(kept) == 0 {
+		return
+	}
+	referenced := make(map[string]bool, len(kept))
+	for _, rec := range kept {
+		if rec.Log != "" {
+			referenced[rec.Log] = true
+		}
+	}
 	dir := paths.RunsDir(job)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
-	var logs []string
 	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".log") {
-			logs = append(logs, entry.Name())
+		name := entry.Name()
+		if strings.HasSuffix(name, ".log") && !referenced[name] {
+			_ = os.Remove(filepath.Join(dir, name))
 		}
 	}
-	sort.Strings(logs)
-	for _, name := range logs[:max(0, len(logs)-keepRuns)] {
-		_ = os.Remove(filepath.Join(dir, name))
-	}
-	trimHistory(job)
 }
 
-func trimHistory(job string) {
+// trimHistory caps the on-disk history to its retention limits and returns the
+// records it kept. ok is false only when the history could not be read, so a
+// caller (pruneRuns) can tell an empty history from an unreadable one and avoid
+// pruning logs it cannot account for.
+func trimHistory(job string) (kept []Record, ok bool) {
 	records, err := History(job)
 	if err != nil {
-		return
+		return nil, false
 	}
-	kept := retainHistory(records)
+	kept = retainHistory(records)
 	if len(kept) == len(records) {
-		return
+		return kept, true
 	}
 	var b strings.Builder
 	for _, rec := range kept {
@@ -467,7 +483,10 @@ func trimHistory(job string) {
 		b.Write(line)
 		b.WriteByte('\n')
 	}
-	_ = os.WriteFile(paths.HistoryPath(job), []byte(b.String()), 0o644)
+	if err := os.WriteFile(paths.HistoryPath(job), []byte(b.String()), 0o644); err != nil {
+		return nil, false
+	}
+	return kept, true
 }
 
 // retainHistory keeps the last keepRuns real Runs and, independently, the last

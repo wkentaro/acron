@@ -1,8 +1,10 @@
 package runner
 
 import (
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -269,6 +271,58 @@ func TestRetentionSkipsDoNotEvictRealRuns(t *testing.T) {
 	}
 	if skip != keepRuns {
 		t.Errorf("kept %d skips, want %d", skip, keepRuns)
+	}
+}
+
+func TestPruneRunsKeepsRealLogsDespiteSkipFlood(t *testing.T) {
+	job := echoJob(t)
+	runsDir := paths.RunsDir(job.Name)
+	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeRun := func(status Status, log string) {
+		if err := os.WriteFile(filepath.Join(runsDir, log), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_ = appendHistory(job.Name, Record{Status: status, Log: log})
+	}
+
+	var realLogs []string
+	for i := 0; i < keepRuns; i++ {
+		name := fmt.Sprintf("real-%02d.log", i)
+		realLogs = append(realLogs, name)
+		writeRun(StatusSuccess, name)
+	}
+	for i := 0; i < keepRuns+5; i++ {
+		writeRun(StatusSkipped, fmt.Sprintf("skip-%02d.log", i))
+	}
+
+	pruneRuns(job.Name)
+
+	for _, name := range realLogs {
+		if _, err := os.Stat(filepath.Join(runsDir, name)); err != nil {
+			t.Errorf("real-run log %s evicted by skip-log flood: %v", name, err)
+		}
+	}
+	if got := len(logFiles(t, job.Name)); got != keepRuns*2 {
+		t.Errorf("kept %d log files, want %d (50 real + 50 skip)", got, keepRuns*2)
+	}
+}
+
+func TestPruneRunsKeepsLogsWhenHistoryMissing(t *testing.T) {
+	job := echoJob(t)
+	runsDir := paths.RunsDir(job.Name)
+	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runsDir, "orphan.log"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	pruneRuns(job.Name)
+
+	if logs := logFiles(t, job.Name); len(logs) != 1 {
+		t.Errorf("pruned logs with no history present: kept %v, want [orphan.log]", logs)
 	}
 }
 

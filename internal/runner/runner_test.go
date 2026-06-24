@@ -379,6 +379,66 @@ func TestPruneRunsKeepsLogsWhenHistoryMissing(t *testing.T) {
 	}
 }
 
+func TestRecordSkippedPrunesEvictedSkipLog(t *testing.T) {
+	job := echoJob(t)
+	runsDir := paths.RunsDir(job.Name)
+	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Fill the skip bucket to its cap with logged condition-skips on disk.
+	for i := 0; i < keepRuns; i++ {
+		log := fmt.Sprintf("skip-%02d.log", i)
+		if err := os.WriteFile(filepath.Join(runsDir, log), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_ = appendHistory(job.Name, Record{Status: StatusSkipped, Reason: ReasonCondition, Log: log})
+	}
+	oldest := filepath.Join(runsDir, "skip-00.log")
+
+	// One more logless skip evicts the oldest logged skip from history; its log
+	// must be pruned, not orphaned on disk.
+	if _, err := recordSkipped(job.Name, ReasonOverlap); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(oldest); !os.IsNotExist(err) {
+		t.Errorf("evicted skip log was not pruned: stat err = %v", err)
+	}
+}
+
+func TestPruneRunsKeepsInflightLiveLog(t *testing.T) {
+	job := echoJob(t)
+	runsDir := paths.RunsDir(job.Name)
+	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A prior recorded run, so pruneRuns does not bail on an empty kept set.
+	if err := os.WriteFile(filepath.Join(runsDir, "done.log"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = appendHistory(job.Name, Record{Status: StatusSuccess, Log: "done.log"})
+
+	// An in-flight Run: its log is on disk and stamped live in the lock file, but
+	// its history record does not exist yet (finishRun has not run).
+	live := "2026-06-24T12-00-00.log"
+	if err := os.WriteFile(filepath.Join(runsDir, live), []byte("partial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(paths.LocksDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stampLiveLog(t, job.Name, live)
+
+	// A concurrent overlap-skip prunes; it must not delete the running agent's log.
+	if _, err := recordSkipped(job.Name, ReasonOverlap); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(runsDir, live)); err != nil {
+		t.Errorf("pruneRuns deleted the in-flight live log: %v", err)
+	}
+}
+
 // captureStdout swaps os.Stdout for a pipe while fn runs and returns what fn
 // wrote. The swap is process-global, so callers must not run in parallel. fn's
 // output must stay under the pipe buffer (these tests emit a few bytes), since

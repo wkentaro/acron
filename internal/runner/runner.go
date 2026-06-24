@@ -114,7 +114,10 @@ func recordSkipped(job string, reason Reason) (Result, error) {
 	if err := appendHistory(job, rec); err != nil {
 		return Result{}, err
 	}
-	trimHistory(job)
+	// Prune, not just trim: a flood of logless skips can evict an older
+	// condition-skip record that did carry a log, and pruneRuns deletes that
+	// now-unreferenced log file. trimHistory alone would orphan it on disk.
+	pruneRuns(job)
 	return Result{Status: StatusSkipped, Reason: reason}, nil
 }
 
@@ -464,16 +467,24 @@ func LastRecord(job string) (Record, bool, error) {
 // in-memory kept set trimHistory returns, so a failed history rewrite never
 // causes a still-referenced log to be pruned; an empty kept set (the history is
 // gone or unwritten) bails rather than deleting every log it cannot account for.
+// An in-flight Run's live log, on disk but not yet in any record, is kept too.
 func pruneRuns(job string) {
 	kept, ok := trimHistory(job)
 	if !ok || len(kept) == 0 {
 		return
 	}
-	referenced := make(map[string]bool, len(kept))
+	referenced := make(map[string]bool, len(kept)+1)
 	for _, rec := range kept {
 		if rec.Log != "" {
 			referenced[rec.Log] = true
 		}
+	}
+	// An in-flight Run's log is on disk (runAgent creates it) before its history
+	// record exists (finishRun writes it last), so a concurrent overlap-skip's
+	// prune would delete the log the running agent is still streaming to. The lock
+	// file names that live log; keep it referenced until the record lands.
+	if live := liveLogName(job); live != "" {
+		referenced[live] = true
 	}
 	dir := paths.RunsDir(job)
 	entries, err := os.ReadDir(dir)

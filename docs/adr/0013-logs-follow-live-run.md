@@ -38,8 +38,8 @@ live Run**:
   (exit 1) in 4m12s`) tells an interactive watcher how it ended without a
   follow-up `acron status`.
 - **Waits through the Condition check, then degrades.** While the lock is held
-  but no agent log exists yet (the Condition is running), `--follow` waits with
-  a `waiting for agent to start...` notice on stderr. If the Run ends before any
+  but no agent log exists yet (the Run is still in `condition`), `--follow` waits
+  with a `waiting for condition...` notice on stderr. If the Run ends before any
   agent transcript streams (a skip, a buffered condition-failure, or a Run that
   finished as we attached), it falls back to printing that Run's complete log if
   it has one, then the footer, rather than erroring after having reported the

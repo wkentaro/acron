@@ -362,8 +362,8 @@ func runTrigger(name string) error {
 			return fmt.Errorf("job %q is not applied; run `acron apply` first", name)
 		}
 	}
-	if runner.IsRunning(name) {
-		fmt.Printf("%s  %s  %s\n", runningStyle.Render("running"), name,
+	if phase, _, ok := liveRunPhase(name); ok {
+		fmt.Printf("%s  %s  %s\n", runningStyle.Render(phase), name,
 			commentStyle.Render("a run is already in progress; not triggered"))
 		return nil
 	}
@@ -512,13 +512,13 @@ func applyStateStyle(state scheduler.ApplyState) lipgloss.Style {
 // renderLastRun produces the STATUS, LAST, and PASSED cells for a job. On the
 // normal path PASSED (elapsed since the run start, with an "ago" suffix) is
 // derived from the same parsed timestamp as LAST, and is blank when LAST has no
-// time to show: a never-run job, or an in-flight run still in its Condition
-// check (unknown start). A running job's PASSED doubles as how long it has been
-// running.
+// time to show: a never-run job, or an in-flight run still in its `condition`
+// phase before the agent start is known. A `running` job's PASSED doubles as
+// how long the agent has been running.
 func renderLastRun(job string, now time.Time) (status, last, passed string, err error) {
-	if since, ok := runner.RunningSince(job); ok {
-		status = runningStyle.Render("running")
-		if !since.IsZero() {
+	if phase, since, ok := liveRunPhase(job); ok {
+		status = runningStyle.Render(phase)
+		if phase == livePhaseRunning {
 			last = commentStyle.Render(since.Local().Format(displayTimeFormat))
 			passed = renderPassed(now.Sub(since))
 		}
@@ -543,6 +543,26 @@ func renderPassed(d time.Duration) string {
 	return commentStyle.Render(formatDuration(d) + " ago")
 }
 
+const (
+	livePhaseCondition = "condition"
+	livePhaseRunning   = "running"
+)
+
+// liveRunPhase reports the current live phase for a Job that still holds its
+// run lock. The phase is `condition` until the agent log exists, at which point
+// the phase becomes `running` and since is the agent start time recovered from
+// that log name.
+func liveRunPhase(job string) (phase string, since time.Time, ok bool) {
+	since, ok = runner.RunningSince(job)
+	if !ok {
+		return "", time.Time{}, false
+	}
+	if since.IsZero() {
+		return livePhaseCondition, time.Time{}, true
+	}
+	return livePhaseRunning, since, true
+}
+
 func runLogs(job, selector string) error {
 	if err := requireJob(job); err != nil {
 		return err
@@ -558,12 +578,12 @@ func runLogs(job, selector string) error {
 // renderLogSummary orients the reader with a one-line header before the log
 // body: job, the run's displayed timestamp, its status, and how long it ran. It
 // goes to stderr (like the --follow footer) so stdout stays the pure log payload.
-// An in-flight Run has no final duration, so it reports how long it has been
-// running instead.
-func renderLogSummary(job string, rec runner.Record, running bool, now time.Time) string {
+// An in-flight agent-phase Run has no final duration yet, so it reports how
+// long it has been running instead.
+func renderLogSummary(job string, rec runner.Record, inFlight bool, now time.Time) string {
 	var status, tail string
-	if running {
-		status = runningStyle.Render("running")
+	if inFlight {
+		status = runningStyle.Render(livePhaseRunning)
 		start, _ := time.Parse(time.RFC3339, rec.Start)
 		tail = "running for " + formatDuration(now.Sub(start))
 	} else {
@@ -596,7 +616,7 @@ const followPollInterval = 200 * time.Millisecond
 // errors when no Run is in flight to attach to.
 func runFollow(job, selector string) error {
 	if selector != "" && selector != "latest" {
-		return fmt.Errorf("--follow attaches to the running run; it cannot be combined with a run selector")
+		return fmt.Errorf("--follow attaches to the in-flight run; it cannot be combined with a run selector")
 	}
 	if err := requireJob(job); err != nil {
 		return err
@@ -627,7 +647,7 @@ func awaitLiveLog(job string) (string, bool) {
 			return logName, true
 		}
 		if !notified {
-			fmt.Fprintln(os.Stderr, "waiting for agent to start...")
+			fmt.Fprintln(os.Stderr, "waiting for condition...")
 			notified = true
 		}
 		time.Sleep(followPollInterval)
@@ -758,8 +778,8 @@ func followFooter(rec runner.Record) string {
 // one (the column stays, so the filtered view is the same table with rows
 // removed). limit caps the rows to the most recent N across the selection; 0
 // shows all. Skipped Runs appear like any other outcome. An in-flight Run shows
-// as a "running" row at the top with no duration yet; it is omitted only while
-// still in its Condition check, before a start time exists.
+// as a `running` row at the top with no duration yet once the agent has started;
+// it is omitted while still in `condition`, before a start time exists.
 func runHistory(name string, limit int) error {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -839,7 +859,7 @@ func runHistory(name string, limit int) error {
 		status := renderStatus(run.rec.Status, run.rec.Reason, run.rec.Log)
 		duration := renderRunDuration(run.rec)
 		if run.running {
-			status = runningStyle.Render("running")
+			status = runningStyle.Render(livePhaseRunning)
 			duration = commentStyle.Render("—")
 		}
 		t.Row(cmdStyle.Render(run.job), when, passed, status, duration)
@@ -880,7 +900,7 @@ func renderRunDuration(rec runner.Record) string {
 // fired time, never a positional index, so the timestamp the table prints
 // round-trips back here as the selector. A timestamp also resolves the in-flight
 // Run; "latest" stays on finished output, since --follow is the verb for
-// attaching to a running Run.
+// attaching to an in-flight Run.
 func resolveLog(job, selector string) (runner.Record, bool, error) {
 	records, err := runner.History(job)
 	if err != nil {
@@ -929,9 +949,9 @@ func logByTimestamp(job, timestamp string, records []runner.Record) (runner.Reco
 	return runner.Record{}, false, fmt.Errorf("no run %q for job %q", timestamp, job)
 }
 
-// inflightRecord builds a Record for the Job's running Run from the live lock
-// state, or reports false when no Run holds the lock or its start is not yet
-// known (still in the Condition check, before the agent log exists).
+// inflightRecord builds a Record for the Job's in-flight agent phase from the
+// live lock state, or reports false when no Run holds the lock or its start is
+// not yet known (still in the Condition check, before the agent log exists).
 func inflightRecord(job string) (runner.Record, bool) {
 	since, ok := runner.RunningSince(job)
 	if !ok || since.IsZero() {

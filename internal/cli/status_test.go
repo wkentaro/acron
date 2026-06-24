@@ -53,3 +53,42 @@ func TestRenderNext(t *testing.T) {
 		t.Errorf("unreachable schedule: got next=%q left=%q, want both placeholder", next, left)
 	}
 }
+
+func TestRenderLastRunShowsConditionWithoutTiming(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	markRunning(t, "job", "")
+
+	status, last, passed, err := renderLastRun("job", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(status, "condition") {
+		t.Errorf("status = %q, want condition", status)
+	}
+	if last != "" {
+		t.Errorf("last = %q, want blank during condition", last)
+	}
+	if passed != "" {
+		t.Errorf("passed = %q, want blank during condition", passed)
+	}
+}
+
+func TestRenderLastRunShowsRunningTimingAfterAgentStart(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	markRunning(t, "job", "2026-06-22T04-00-00.log")
+
+	now := time.Date(2026, 6, 22, 4, 5, 0, 0, time.Local)
+	status, last, passed, err := renderLastRun("job", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(status, "running") {
+		t.Errorf("status = %q, want running", status)
+	}
+	if !strings.Contains(last, "2026-06-22 04:00:00") {
+		t.Errorf("last = %q, want stamped start time", last)
+	}
+	if !strings.Contains(passed, "5min") {
+		t.Errorf("passed = %q, want elapsed running time", passed)
+	}
+}

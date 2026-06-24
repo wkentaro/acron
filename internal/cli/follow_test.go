@@ -152,6 +152,74 @@ func TestRunFollowStreamsLiveRunToCompletion(t *testing.T) {
 	}
 }
 
+func TestRunFollowWaitsForLiveLogFileToAppear(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	seedConfig(t, "busy")
+	job, logName := "busy", "2026-06-22T04-00-00.log"
+	logPath := filepath.Join(paths.RunsDir(job), logName)
+	// The runner stamps the live-log name into the lock before it creates the log
+	// file, so a follower can learn the name a beat before the file exists. Seed
+	// the record the footer reads and stamp the name, but leave the file absent.
+	writeHistory(t, job, runner.Record{
+		Start: "2026-06-22T04:00:00Z", Status: runner.StatusSuccess, DurationS: 3, Log: logName,
+	})
+
+	lock := acquireTestLock(t, job)
+	stampLiveLog(t, job, logName)
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		_ = os.WriteFile(logPath, []byte("late hello"), 0o644)
+		time.Sleep(50 * time.Millisecond)
+		_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+		_ = lock.Close()
+	}()
+
+	out, errOut, err := captureOutErr(t, func() error { return runFollow(job, "") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "late hello" {
+		t.Errorf("stdout = %q, want %q (follower must wait for the late log file)", out, "late hello")
+	}
+	if !strings.Contains(errOut, "run success in 3s") {
+		t.Errorf("stderr footer = %q, want it to report success", errOut)
+	}
+}
+
+func TestRunFollowDegradesWhenLiveLogFileNeverAppears(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	seedConfig(t, "busy")
+	job, logName := "busy", "2026-06-22T05-00-00.log"
+	// The runner stamped this live-log name but creating its file failed, so no
+	// record ever names it. The follower must fall back to the recorded result
+	// rather than hang waiting for a file that will never appear.
+	writeHistory(t, job, runner.Record{
+		Start: "2026-06-22T05:00:00Z", End: "2026-06-22T05:00:02Z",
+		Status: runner.StatusFailure, Exit: 1, DurationS: 2,
+	})
+
+	lock := acquireTestLock(t, job)
+	stampLiveLog(t, job, logName)
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+		_ = lock.Close()
+	}()
+
+	out, errOut, err := captureOutErr(t, func() error { return runFollow(job, "") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "" {
+		t.Errorf("stdout = %q, want empty (no log file ever appeared)", out)
+	}
+	if !strings.Contains(errOut, "run failure (exit 1)") {
+		t.Errorf("stderr footer = %q, want it to report the recorded failure", errOut)
+	}
+}
+
 func TestRunFollowDegradesWhenRunEndsDuringCondition(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	seedConfig(t, "busy")

@@ -243,6 +243,9 @@ func TestRunFollowDegradesWhenRunEndsDuringCondition(t *testing.T) {
 	if out != "" {
 		t.Errorf("stdout = %q, want empty (skipped run has no output)", out)
 	}
+	if !strings.Contains(errOut, "waiting for condition...") {
+		t.Errorf("stderr = %q, want it to announce the condition phase", errOut)
+	}
 	if !strings.Contains(errOut, "run skipped (condition)") {
 		t.Errorf("stderr footer = %q, want it to report the skip", errOut)
 	}

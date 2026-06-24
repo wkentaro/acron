@@ -9,7 +9,7 @@ The underlying coding-agent CLI that acron triggers (e.g. Claude Code, Codex, op
 _Avoid_: Assistant, model, bot
 
 **Run**:
-A single execution of an agent triggered by the scheduler at a fired time. A Run ends with a status: `success`, `failure`, `timeout`, or `skipped` (the firing was dropped without running the agent — either the previous Run still held the lock, or the Condition was not met). While a Run is in flight it has no recorded status; `acron status` and `acron history` report it as `running`, a live state derived from the held lock and never written to Run history. A Run is identified by its fired time, the stable handle the CLI uses to select it (e.g. `acron logs`), which resolves the in-flight Run too once its log exists.
+A single execution of an agent triggered by the scheduler at a fired time. A Run ends with a status: `success`, `failure`, `timeout`, `skipped` (the firing was dropped without running the agent — either the previous Run still held the lock, or the Condition was not met), or `interrupted` (the operator aborted it with Ctrl-C, SIGINT/SIGTERM, before it reached a verdict). While a Run is in flight it has no recorded status; `acron status` and `acron history` report it as `running`, a live state derived from the held lock and never written to Run history. A Run is identified by its fired time, the stable handle the CLI uses to select it (e.g. `acron logs`), which resolves the in-flight Run too once its log exists.
 _Avoid_: Execution, invocation, trigger (as a noun)
 
 **Condition**:

@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"os"
 	"syscall"
 	"testing"
@@ -51,7 +52,7 @@ func TestIsRunningWhileHeld(t *testing.T) {
 
 func TestIsRunningAfterFinish(t *testing.T) {
 	job := echoJob(t)
-	if _, err := Run(job); err != nil {
+	if _, err := Run(context.Background(), job); err != nil {
 		t.Fatal(err)
 	}
 	if IsRunning(job.Name) {

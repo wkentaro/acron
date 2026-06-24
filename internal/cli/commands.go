@@ -3,14 +3,17 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -304,17 +307,25 @@ func runJob(name string) error {
 	if !ok {
 		return fmt.Errorf("no job named %q", name)
 	}
-	result, err := runner.Run(job)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	result, err := runner.Run(ctx, job)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%s  %s  exit %d  %s\n",
-		renderStatus(result.Status, result.Reason, result.LogPath), name, result.Exit, result.Duration.Round(time.Second))
+	summary := fmt.Sprintf("%s  %s", renderStatus(result.Status, result.Reason, result.LogPath), name)
+	if result.Exit >= 0 {
+		summary += fmt.Sprintf("  exit %d", result.Exit)
+	}
+	fmt.Printf("%s  %s\n", summary, result.Duration.Round(time.Second))
 	if len(result.Command) > 0 {
 		fmt.Println(commentStyle.Render(renderCommand(result.Command)))
 	}
 	if result.LogPath != "" {
 		fmt.Println(commentStyle.Render(result.LogPath))
+	}
+	if result.Status == runner.StatusInterrupted {
+		return errInterrupted
 	}
 	return nil
 }
@@ -1165,7 +1176,7 @@ func statusStyle(status runner.Status) lipgloss.Style {
 	switch status {
 	case runner.StatusSuccess:
 		return addStyle
-	case runner.StatusSkipped:
+	case runner.StatusSkipped, runner.StatusInterrupted:
 		return commentStyle
 	default:
 		return removeStyle

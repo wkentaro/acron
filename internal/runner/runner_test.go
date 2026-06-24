@@ -1,12 +1,14 @@
 package runner
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wkentaro/acron/internal/config"
 	"github.com/wkentaro/acron/internal/paths"
@@ -26,7 +28,7 @@ func echoJob(t *testing.T) config.Job {
 func TestRunSuccess(t *testing.T) {
 	job := echoJob(t)
 
-	result, err := Run(job)
+	result, err := Run(context.Background(), job)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +57,7 @@ func TestRunFailureRecordsExit(t *testing.T) {
 	job := echoJob(t)
 	job.Agent = []string{"/bin/sh", "-c", "exit 3"}
 
-	result, err := Run(job)
+	result, err := Run(context.Background(), job)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +75,7 @@ func TestRunSkipsWhenLocked(t *testing.T) {
 	}
 	defer releaseLock(lock)
 
-	result, err := Run(job)
+	result, err := Run(context.Background(), job)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +89,7 @@ func TestRunTimeout(t *testing.T) {
 	job.Agent = []string{"/bin/sh", "-c", "sleep 30"}
 	job.Timeout = "1s"
 
-	result, err := Run(job)
+	result, err := Run(context.Background(), job)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +117,7 @@ func TestRunConditionProceeds(t *testing.T) {
 	job := echoJob(t)
 	job.Condition = []string{"/bin/sh", "-c", "exit 0"}
 
-	result, err := Run(job)
+	result, err := Run(context.Background(), job)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +138,7 @@ func TestRunConditionPassPrintsMarker(t *testing.T) {
 	job.Condition = []string{"/bin/sh", "-c", "exit 0"}
 
 	out := captureStdout(t, func() {
-		if _, err := Run(job); err != nil {
+		if _, err := Run(context.Background(), job); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -153,7 +155,7 @@ func TestRunNoConditionOmitsMarker(t *testing.T) {
 	job := echoJob(t)
 
 	out := captureStdout(t, func() {
-		if _, err := Run(job); err != nil {
+		if _, err := Run(context.Background(), job); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -167,7 +169,7 @@ func TestRunConditionSkips(t *testing.T) {
 	job := echoJob(t)
 	job.Condition = []string{"/bin/sh", "-c", "exit 1"}
 
-	result, err := Run(job)
+	result, err := Run(context.Background(), job)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +198,7 @@ func TestRunConditionSkipWithStdoutOnlyStaysClean(t *testing.T) {
 	// the negative case: stdout output, no stderr, an ordinary skip.
 	job.Condition = []string{"/bin/sh", "-c", "echo false; exit 1"}
 
-	result, err := Run(job)
+	result, err := Run(context.Background(), job)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +217,7 @@ func TestRunConditionSkipWithStderrWritesLog(t *testing.T) {
 	job := echoJob(t)
 	job.Condition = []string{"/bin/sh", "-c", "echo gh auth login >&2; exit 2"}
 
-	result, err := Run(job)
+	result, err := Run(context.Background(), job)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +249,7 @@ func TestRunConditionFailureWritesLog(t *testing.T) {
 	job := echoJob(t)
 	job.Condition = []string{"/bin/sh", "-c", "echo broke >&2; exit 255"}
 
-	result, err := Run(job)
+	result, err := Run(context.Background(), job)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +271,7 @@ func TestRunConditionTimeoutFails(t *testing.T) {
 	job.Condition = []string{"/bin/sh", "-c", "sleep 30"}
 	job.Timeout = "1s"
 
-	result, err := Run(job)
+	result, err := Run(context.Background(), job)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,13 +290,99 @@ func TestRunConditionOverlapTakesPrecedence(t *testing.T) {
 	}
 	defer releaseLock(lock)
 
-	result, err := Run(job)
+	result, err := Run(context.Background(), job)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Status != StatusSkipped || result.Reason != ReasonOverlap {
 		t.Fatalf("got status=%s reason=%s, want skipped/overlap", result.Status, result.Reason)
 	}
+}
+
+func TestRunAgentInterrupted(t *testing.T) {
+	job := echoJob(t)
+	job.Agent = []string{"/bin/sh", "-c", "sleep 30"}
+
+	ctx, stop := cancelWhenRunning(t, job.Name)
+	defer stop()
+
+	result, err := Run(ctx, job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != StatusInterrupted {
+		t.Fatalf("got status=%s, want interrupted", result.Status)
+	}
+	if IsRunning(job.Name) {
+		t.Error("lock still held after interrupt, want released")
+	}
+}
+
+func TestRunAgentInterruptedWhenSignalTrapped(t *testing.T) {
+	job := echoJob(t)
+	// An agent that traps the signal and exits 0 still aborted at the operator's
+	// hand: the cancellation is recorded as interrupted, not as a clean success.
+	// The inner sleep's output is detached from the captured pipe so the shell's
+	// trapped exit tears the run down at once instead of waiting out killGrace.
+	job.Agent = []string{"/bin/sh", "-c", "trap 'exit 0' TERM; sleep 30 >/dev/null 2>&1"}
+
+	ctx, stop := cancelWhenRunning(t, job.Name)
+	defer stop()
+
+	result, err := Run(ctx, job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != StatusInterrupted {
+		t.Fatalf("got status=%s, want interrupted", result.Status)
+	}
+}
+
+func TestRunConditionInterrupted(t *testing.T) {
+	job := echoJob(t)
+	job.Condition = []string{"/bin/sh", "-c", "sleep 30"}
+
+	ctx, stop := cancelWhenRunning(t, job.Name)
+	defer stop()
+
+	result, err := Run(ctx, job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != StatusInterrupted || result.Reason != ReasonCondition {
+		t.Fatalf("got status=%s reason=%s, want interrupted/condition", result.Status, result.Reason)
+	}
+	if IsRunning(job.Name) {
+		t.Error("lock still held after interrupt, want released")
+	}
+	if result.Command != nil {
+		t.Errorf("agent ran despite the condition being interrupted: %v", result.Command)
+	}
+}
+
+// cancelWhenRunning returns a context that cancels once a Run holds job's lock,
+// simulating a Ctrl-C landing while the run is in flight, and a stop that ends
+// the watcher. It polls the lock because the runner exposes no synchronous seam
+// to signal that the child has started.
+func cancelWhenRunning(t *testing.T, job string) (context.Context, func()) {
+	t.Helper()
+	const lockPollInterval = time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			if IsRunning(job) {
+				cancel()
+				return
+			}
+			time.Sleep(lockPollInterval)
+		}
+	}()
+	return ctx, cancel
 }
 
 func TestRetentionSkipsDoNotEvictRealRuns(t *testing.T) {

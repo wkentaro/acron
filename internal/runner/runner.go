@@ -29,16 +29,18 @@ const (
 type Status string
 
 const (
-	StatusSuccess Status = "success"
-	StatusFailure Status = "failure"
-	StatusTimeout Status = "timeout"
-	StatusSkipped Status = "skipped"
+	StatusSuccess     Status = "success"
+	StatusFailure     Status = "failure"
+	StatusTimeout     Status = "timeout"
+	StatusSkipped     Status = "skipped"
+	StatusInterrupted Status = "interrupted"
 )
 
 // Reason qualifies a Run's status when the agent did not produce it: the firing
 // was dropped (ReasonOverlap, or ReasonCondition for a clean skip), or the
-// condition check itself broke (ReasonCondition with StatusFailure). ReasonNone
-// is the zero value, used when the agent ran and produced the status.
+// condition check itself broke or was interrupted (ReasonCondition with
+// StatusFailure or StatusInterrupted). ReasonNone is the zero value, used when
+// the agent ran — whether it produced the status or an interrupt aborted it.
 type Reason string
 
 const (
@@ -66,7 +68,11 @@ type Record struct {
 	Log       string `json:"log"`
 }
 
-func Run(job config.Job) (Result, error) {
+// Run executes the Job's optional condition then its agent, bounded by the
+// Job's timeout. ctx carries the caller's interrupt (SIGINT/SIGTERM in the
+// `acron run` path): cancelling it records the in-flight Run as interrupted and
+// releases the lock, distinct from a deliberate skip or a failure.
+func Run(ctx context.Context, job config.Job) (Result, error) {
 	timeout, err := job.ResolvedTimeout()
 	if err != nil {
 		return Result{}, err
@@ -81,14 +87,14 @@ func Run(job config.Job) (Result, error) {
 	}
 	defer releaseLock(lock)
 
-	if result, proceed, err := evalCondition(job, timeout); err != nil || !proceed {
+	if result, proceed, err := evalCondition(ctx, job, timeout); err != nil || !proceed {
 		return result, err
 	}
 
-	return runAgent(job, timeout, lock)
+	return runAgent(ctx, job, timeout, lock)
 }
 
-func runAgent(job config.Job, timeout time.Duration, lock *os.File) (Result, error) {
+func runAgent(ctx context.Context, job config.Job, timeout time.Duration, lock *os.File) (Result, error) {
 	runsDir := paths.RunsDir(job.Name)
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
 		return Result{}, err
@@ -104,7 +110,7 @@ func runAgent(job config.Job, timeout time.Duration, lock *os.File) (Result, err
 	recordLiveLog(lock, logName)
 
 	argv := substitutePrompt(job.Agent, job.Prompt)
-	exit, status := execAgent(argv, job, timeout, io.MultiWriter(logFile, os.Stdout))
+	exit, status := execAgent(ctx, argv, job, timeout, io.MultiWriter(logFile, os.Stdout))
 	return finishRun(job.Name, start, status, ReasonNone, exit, logName, argv)
 }
 
@@ -146,33 +152,51 @@ func finishRun(job string, start time.Time, status Status, reason Reason, exit i
 	}, nil
 }
 
-func execAgent(argv []string, job config.Job, timeout time.Duration, out io.Writer) (int, Status) {
-	exit, timedOut, err := runCmd(argv, job, timeout, out, out)
+func execAgent(ctx context.Context, argv []string, job config.Job, timeout time.Duration, out io.Writer) (int, Status) {
+	exit, outcome, err := runCmd(ctx, argv, job, timeout, out, out)
 	switch {
+	case outcome == cmdInterrupted:
+		return exit, StatusInterrupted
+	case outcome == cmdTimedOut:
+		return exit, StatusTimeout
 	case err == nil:
 		return 0, StatusSuccess
-	case timedOut:
-		return exit, StatusTimeout
 	default:
 		return exit, StatusFailure
 	}
 }
 
+// cmdOutcome names why a runCmd child stopped, beyond its exit code: it ran to
+// completion (cmdDone, success or a non-zero exit), the timeout fired
+// (cmdTimedOut), or the caller cancelled (cmdInterrupted). The three are
+// mutually exclusive, so one value replaces a pair of parallel booleans.
+type cmdOutcome int
+
+const (
+	cmdDone cmdOutcome = iota
+	cmdTimedOut
+	cmdInterrupted
+)
+
 // runCmd executes argv with the Job's cwd and env, sending stdout and stderr to
 // the given writers, bounded by timeout (SIGTERM, then SIGKILL after killGrace).
 // Passing one writer for both (as the agent does) interleaves the streams as a
 // terminal would; passing separate writers (as the condition check does) keeps
-// them apart so stderr can be told from stdout. It returns the process exit code
-// (-1 if it never produced one), whether the timeout fired, and the run error.
-func runCmd(argv []string, job config.Job, timeout time.Duration, stdout, stderr io.Writer) (int, bool, error) {
-	ctx := context.Background()
-	cancel := func() {}
+// them apart so stderr can be told from stdout. Cancelling ctx interrupts the
+// run the same way. It returns the process exit code (-1 if it never produced
+// one, or when the run was externally terminated), the outcome, and the run
+// error. A shell-wrapped child interrupted by Ctrl-C exits 128+SIGINT, which is
+// indistinguishable from a deliberate exit code, so the interrupt is detected
+// from ctx rather than guessed from the exit.
+func runCmd(ctx context.Context, argv []string, job config.Job, timeout time.Duration, stdout, stderr io.Writer) (exit int, outcome cmdOutcome, err error) {
+	timeoutCtx := ctx
 	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, timeout)
+		var cancel context.CancelFunc
+		timeoutCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
 	}
-	defer cancel()
 
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd := exec.CommandContext(timeoutCtx, argv[0], argv[1:]...)
 	cmd.Dir = paths.ExpandHome(job.Cwd)
 	cmd.Env = jobEnv(job)
 	cmd.Stdin = nil // nil stdin connects the child to /dev/null
@@ -181,17 +205,25 @@ func runCmd(argv []string, job config.Job, timeout time.Duration, stdout, stderr
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = killGrace // SIGKILL if it ignores SIGTERM within the grace period
 
-	err := cmd.Run()
+	// A caller interrupt is detected on the caller's ctx (cancelled), not the
+	// timeout-wrapped one (a child reaped after the deadline reports
+	// DeadlineExceeded even when the real cause was the cancel). It is checked
+	// before the exit code, so an agent that traps the signal and exits cleanly
+	// is still recorded as interrupted, and it takes priority over a simultaneous
+	// deadline.
+	err = cmd.Run()
 	switch {
+	case ctx.Err() == context.Canceled:
+		return -1, cmdInterrupted, err
 	case err == nil:
-		return 0, false, nil
-	case ctx.Err() == context.DeadlineExceeded:
-		return -1, true, err
+		return 0, cmdDone, nil
+	case timeoutCtx.Err() == context.DeadlineExceeded:
+		return -1, cmdTimedOut, err
 	default:
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode(), false, err
+			return exitErr.ExitCode(), cmdDone, err
 		}
-		return -1, false, err
+		return -1, cmdDone, err
 	}
 }
 
@@ -201,6 +233,7 @@ const (
 	conditionProceed conditionOutcome = iota
 	conditionSkip
 	conditionFail
+	conditionInterrupt
 )
 
 // evalCondition runs the Job's condition (if any) before the agent. proceed is
@@ -209,14 +242,14 @@ const (
 // passing condition prints a marker straight to stdout before the agent
 // streams; it never reaches the captured run log, so a stream-json log stays
 // byte-for-byte the agent's own output.
-func evalCondition(job config.Job, timeout time.Duration) (Result, bool, error) {
+func evalCondition(ctx context.Context, job config.Job, timeout time.Duration) (Result, bool, error) {
 	if len(job.Condition) == 0 {
 		return Result{}, true, nil
 	}
 
 	start := time.Now()
 	var stdout, stderr bytes.Buffer
-	exit, outcome := execCondition(job, timeout, &stdout, &stderr)
+	exit, outcome := execCondition(ctx, job, timeout, &stdout, &stderr)
 	switch outcome {
 	case conditionSkip:
 		// A well-behaved gate is a quiet predicate (test, grep -q) or prints its
@@ -233,6 +266,9 @@ func evalCondition(job config.Job, timeout time.Duration) (Result, bool, error) 
 		return result, false, err
 	case conditionFail:
 		result, err := recordConditionOutcome(job.Name, start, StatusFailure, exit, combinedOutput(&stdout, &stderr))
+		return result, false, err
+	case conditionInterrupt:
+		result, err := recordConditionOutcome(job.Name, start, StatusInterrupted, exit, combinedOutput(&stdout, &stderr))
 		return result, false, err
 	default:
 		fmt.Printf("condition passed %s\n", job.Name)
@@ -253,13 +289,15 @@ func combinedOutput(stdout, stderr *bytes.Buffer) []byte {
 // execCondition runs the condition command and maps its exit to an outcome,
 // mirroring systemd ExecCondition=: 0 proceeds, 1-254 is a clean skip, and 255
 // or death by signal/timeout is a failure (the check itself is broken).
-func execCondition(job config.Job, timeout time.Duration, stdout, stderr io.Writer) (int, conditionOutcome) {
-	exit, timedOut, err := runCmd(job.Condition, job, timeout, stdout, stderr)
+func execCondition(ctx context.Context, job config.Job, timeout time.Duration, stdout, stderr io.Writer) (int, conditionOutcome) {
+	exit, outcome, err := runCmd(ctx, job.Condition, job, timeout, stdout, stderr)
 	switch {
+	case outcome == cmdInterrupted:
+		return exit, conditionInterrupt
+	case outcome == cmdTimedOut:
+		return exit, conditionFail
 	case err == nil:
 		return 0, conditionProceed
-	case timedOut:
-		return exit, conditionFail
 	case exit >= 1 && exit <= 254:
 		return exit, conditionSkip
 	default:
@@ -269,8 +307,8 @@ func execCondition(job config.Job, timeout time.Duration, stdout, stderr io.Writ
 
 // recordConditionOutcome records a Run produced by the condition check rather
 // than the agent, preserving the condition's captured output in a log file so
-// the reason (a broken check, or a skip whose tooling misfired) is discoverable
-// via `acron logs`.
+// the reason (a broken check, an interrupt mid-check, or a skip whose tooling
+// misfired) is discoverable via `acron logs`.
 func recordConditionOutcome(job string, start time.Time, status Status, exit int, output []byte) (Result, error) {
 	runsDir := paths.RunsDir(job)
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {

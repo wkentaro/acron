@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -9,11 +10,21 @@ import (
 
 const version = "0.0.0-dev"
 
+// errInterrupted marks a `run` aborted by Ctrl-C (SIGINT/SIGTERM). The Run is
+// already recorded and reported as interrupted, so Execute only translates it
+// into the conventional 130 exit code without printing a redundant error line.
+var errInterrupted = errors.New("interrupted")
+
 func Execute() {
-	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, errorStyle.Render("error")+": "+err.Error())
-		os.Exit(1)
+	err := newRootCmd().Execute()
+	if err == nil {
+		return
 	}
+	if errors.Is(err, errInterrupted) {
+		os.Exit(130)
+	}
+	fmt.Fprintln(os.Stderr, errorStyle.Render("error")+": "+err.Error())
+	os.Exit(1)
 }
 
 func newRootCmd() *cobra.Command {

@@ -190,6 +190,59 @@ func TestRunConditionSkips(t *testing.T) {
 	}
 }
 
+func TestRunConditionSkipWithStdoutOnlyStaysClean(t *testing.T) {
+	job := echoJob(t)
+	// A chatty-but-working gate, e.g. `jq -e 'length > 0'` printing `false` on
+	// the negative case: stdout output, no stderr, an ordinary skip.
+	job.Condition = []string{"/bin/sh", "-c", "echo false; exit 1"}
+
+	result, err := Run(job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != StatusSkipped || result.Reason != ReasonCondition {
+		t.Fatalf("got status=%s reason=%s, want skipped/condition", result.Status, result.Reason)
+	}
+	if result.LogPath != "" {
+		t.Errorf("stdout-only skip wrote a log: %s", result.LogPath)
+	}
+	if logs := logFiles(t, job.Name); len(logs) != 0 {
+		t.Errorf("stdout-only skip left log files: %v", logs)
+	}
+}
+
+func TestRunConditionSkipWithStderrWritesLog(t *testing.T) {
+	job := echoJob(t)
+	job.Condition = []string{"/bin/sh", "-c", "echo gh auth login >&2; exit 2"}
+
+	result, err := Run(job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != StatusSkipped || result.Reason != ReasonCondition {
+		t.Fatalf("got status=%s reason=%s, want skipped/condition", result.Status, result.Reason)
+	}
+
+	last, ok, err := LastRecord(job.Name)
+	if err != nil || !ok {
+		t.Fatalf("LastRecord ok=%v err=%v", ok, err)
+	}
+	if last.Log == "" {
+		t.Fatal("skip with output left no log reference on the record")
+	}
+	if last.Exit != 2 {
+		t.Errorf("recorded exit = %d, want 2 (the broken condition's exit)", last.Exit)
+	}
+
+	data, err := os.ReadFile(result.LogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "gh auth login") {
+		t.Errorf("log = %q, want it to contain the condition output", string(data))
+	}
+}
+
 func TestRunConditionFailureWritesLog(t *testing.T) {
 	job := echoJob(t)
 	job.Condition = []string{"/bin/sh", "-c", "echo broke >&2; exit 255"}

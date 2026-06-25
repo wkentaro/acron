@@ -169,7 +169,67 @@ func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show each job's apply state and last run",
-		Args:  cobra.NoArgs,
+		Long: `Show each Job's Apply state and latest Run, one row per Job.
+
+Rows are the union of Config Jobs and any acron-owned units installed on this
+machine, so an orphaned unit (still installed for a Job no longer in the Config)
+appears even though it has no Config entry. Each Job is reported on two
+independent axes: its Apply state (computed from the same comparison 'acron
+apply' performs) and its Run status (the last record in the Run history).
+
+Columns:
+
+  JOB     The Job's name.
+
+  APPLY   The Job's Apply state:
+            applied    units match the Config and the timer is active; 'apply'
+                       would be a no-op
+            drifted    'apply' would rewrite or restart the units; run 'acron apply'
+            unapplied  declared in the Config but not yet installed; run 'acron apply'
+            orphaned   units installed for a Job no longer in the Config; 'apply'
+                       auto-prunes these
+            disabled   the Job sets enabled = false, so 'apply' keeps it uninstalled
+
+  STATUS  The latest Run's outcome:
+            success                     the agent exited zero
+            failure                     the agent exited non-zero
+            timeout                     the Run exceeded its timeout
+            interrupted                 the operator aborted it before a verdict
+            skipped (overlap)           the previous Run still held the lock, so
+                                        this firing was dropped
+            skipped (condition)         the Condition returned non-zero, a clean
+                                        negative; no agent ran, shown dimmed
+            skipped (condition, output) the Condition check also wrote to stderr,
+                                        which usually means the check is broken;
+                                        shown in yellow, run 'acron logs <job>'
+                                        to inspect
+            condition                   the Condition check is running; a live
+                                        state, never stored, shown in yellow;
+                                        LAST and PASSED stay blank until the
+                                        agent starts
+            running                     the agent is running now; a live state,
+                                        never stored, shown in yellow; LAST and
+                                        PASSED track the agent start
+            never run                   no Run has been recorded yet
+
+          A Condition check that breaks rather than returning a clean negative
+          surfaces under its own outcome, as failure (condition) or interrupted
+          (condition), not as a skip.
+
+  LAST    Absolute start time of the latest Run (local time). This exact string
+          is accepted by 'acron logs <job> "<LAST>"' as a run selector.
+
+  PASSED  Elapsed since LAST (e.g. 1h 35min ago); for a running Job, elapsed
+          since the Run started; blank when LAST is blank.
+
+  NEXT    Next scheduled fire time; shown only for applied Jobs; — (not
+          applicable) for every other Apply state.
+
+  LEFT    Time remaining until NEXT (e.g. 12min 30s); — when NEXT is —.`,
+		Example: `
+acron status
+`,
+		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			return runStatus()
 		},

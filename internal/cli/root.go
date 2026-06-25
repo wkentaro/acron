@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const version = "0.0.0-dev"
+var version = "0.0.0-dev" // set by -ldflags at build time
 
 // errInterrupted marks a `run` aborted by Ctrl-C (SIGINT/SIGTERM). The Run is
 // already recorded and reported as interrupted, so Execute only translates it

@@ -19,7 +19,7 @@ help:
 	@grep -E '^[a-zA-Z_-]+:.*# ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*# "}{printf "  \033[1;36m%-12s\033[0m %s\n", $$1, $$2}'
 
 build:  # Build the acron binary
-	$(call exec,go build -o acron .)
+	$(call exec,go build -ldflags "-X github.com/wkentaro/acron/internal/cli.version=$$(git describe --tags --always --dirty)" -o acron .)
 
 test:  # Run tests
 	$(call exec,go test ./...)

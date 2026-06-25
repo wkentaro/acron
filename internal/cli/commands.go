@@ -313,11 +313,7 @@ func runJob(name string) error {
 	if err != nil {
 		return err
 	}
-	summary := fmt.Sprintf("%s  %s", renderStatus(result.Status, result.Reason, result.LogPath), name)
-	if result.Exit >= 0 {
-		summary += fmt.Sprintf("  exit %d", result.Exit)
-	}
-	fmt.Printf("%s  %s\n", summary, result.Duration.Round(time.Second))
+	fmt.Println(runFooter(result, name))
 	if len(result.Command) > 0 {
 		fmt.Println(commentStyle.Render(renderCommand(result.Command)))
 	}
@@ -328,6 +324,17 @@ func runJob(name string) error {
 		return errInterrupted
 	}
 	return nil
+}
+
+// runFooter is the foreground sibling of followFooter: the one-line summary
+// printed when `acron run` finishes. It annotates the exit only when the agent
+// ran and exited nonzero, so success (exit 0) and skips (no agent exit) show none.
+func runFooter(result runner.Result, name string) string {
+	line := fmt.Sprintf("%s  %s", renderStatus(result.Status, result.Reason, result.LogPath), name)
+	if result.Status != runner.StatusSkipped && result.Exit > 0 {
+		line += fmt.Sprintf("  exit %d", result.Exit)
+	}
+	return fmt.Sprintf("%s  %s", line, result.Duration.Round(time.Second))
 }
 
 func runTrigger(name string) error {

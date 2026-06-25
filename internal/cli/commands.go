@@ -120,7 +120,38 @@ func newApplyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "apply",
 		Short: "Reconcile OS scheduler units to the config",
-		Args:  cobra.NoArgs,
+		Long: `acron apply reconciles this machine's scheduler units to the Config. It validates
+the entire Config atomically first: if any Job has a missing required field, a
+duplicate or malformed name, an unparseable schedule, an empty agent, or a
+non-existent cwd, apply fails with that error before touching a single unit. It
+then computes the units desired from the enabled Jobs, snapshots the calling
+shell's PATH into each generated unit, and creates, updates, and removes units so
+the installed set matches the Config, reloading the scheduler and enabling timers.
+
+apply is idempotent and only ever touches units in acron's own namespace; it
+never modifies hand-written units.
+
+A real apply prints an "Applied:" header followed by one line per change, each
+marked + (created), ~ (updated), or - (removed):
+
+  Applied:
+    + acron-nightly-triage.timer
+    + acron-nightly-triage.service
+    ~ acron-process-prs.timer
+    - acron-old-job.timer
+
+or "Nothing to do." when the installed units already match the Config.
+
+--dry-run prints the same +/~/- summary under a "Would apply:" header, plus a
+git-style unified diff per changed job showing exactly what would change: three
+lines of context, @@ hunk headers, and /dev/null for a created or removed unit. A
+job whose unit files are byte-identical but whose timer is inactive shows
+"(units unchanged, would reload and restart)" in place of a diff body.`,
+		Example: `
+acron apply            # Reconcile this machine's units to the Config
+acron apply --dry-run  # Preview the plan as a git-style diff; change nothing
+`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 			return runApply(dryRun)

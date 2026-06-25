@@ -134,7 +134,17 @@ func newDestroyCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "destroy",
 		Short: "Remove all acron-owned units from this machine",
-		Args:  cobra.NoArgs,
+		Long: `acron destroy removes every acron-owned unit from this machine while leaving the
+Config intact, so a later acron apply reinstalls them. It is for decommissioning
+one machine while keeping the Config in your dotfiles, not for deleting a job,
+which you do by editing the Config.
+
+It prints a "Destroyed:" header followed by one line per removed unit (each marked
+"-"), or "Nothing to do." when no acron-owned units are installed.`,
+		Example: `
+acron destroy  # Remove all acron-owned units from this machine; keep the Config
+`,
+		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			return runDestroy()
 		},
@@ -143,8 +153,25 @@ func newDestroyCmd() *cobra.Command {
 
 func newRunCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:               "run <job>",
-		Short:             "Run a job now (the entry the scheduler invokes)",
+		Use:   "run <job>",
+		Short: "Run a job now (the entry the scheduler invokes)",
+		Long: `acron run <job> runs a job now, in the foreground. It is the exact entry point the
+OS scheduler invokes for a scheduled firing, so running it by hand is a faithful
+simulation of one: the overlap lock, the Condition check, the timeout, and the Run
+history all apply.
+
+When the agent finishes it prints a result line:
+
+  <STATUS>  <job>  exit <N>  <DURATION>
+
+followed by the resolved agent command and the log path (both dimmed). The
+"exit <N>" field is omitted when the run produced no exit code, as for an
+interrupted or timed-out run; the resolved agent command is omitted when the agent
+never ran, as for a skipped run. Interrupting with Ctrl-C records the run as
+interrupted and exits 130.`,
+		Example: `
+acron run nightly-triage  # Run the job now in the foreground, as the scheduler would
+`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeJobNames,
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -155,8 +182,25 @@ func newRunCmd() *cobra.Command {
 
 func newTriggerCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:               "trigger <job>",
-		Short:             "Fire a job now, out of schedule, in the background",
+		Use:   "trigger <job>",
+		Short: "Fire a job now, out of schedule, in the background",
+		Long: `acron trigger <job> fires a job once, now, out of schedule, in the background, and
+returns immediately. It asks the OS scheduler to start the job's installed unit, so
+the firing passes through the same lock, Condition, timeout, and Run history as a
+scheduled one. A trigger changes only when a job fires, never what runs or whether
+it runs (the Condition is still evaluated).
+
+It requires the job to be applied and refuses otherwise with a state-specific hint:
+disabled (enable it and apply), drifted (apply first, so the current Config runs
+rather than a stale unit), orphaned (not in the Config), or unapplied (apply first).
+If a run is already in progress it prints "<phase>  <job>  a run is already in
+progress; not triggered" and exits 0, a no-op rather than an error; <phase> is
+running, or condition while the in-flight run is still evaluating its Condition. On
+success it prints "triggered  <job>" followed by "acron logs <job>" (dimmed) to
+follow the run.`,
+		Example: `
+acron trigger nightly-triage  # Fire the job once now, in the background
+`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeJobNames,
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -178,8 +222,29 @@ func newStatusCmd() *cobra.Command {
 
 func newShowCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:               "show <job>",
-		Short:             "Show a job's generated unit and whether it matches what is installed",
+		Use:   "show <job>",
+		Short: "Show a job's generated unit and whether it matches what is installed",
+		Long: `acron show <job> is a config-to-unit inspector: it prints the unit that apply would
+install, not a preview of what apply would do (that preview is acron apply
+--dry-run).
+
+The output is a job-and-state line (<job>  <apply-state>), then each generated unit
+file, preceded by a "# <unit-name>" header and printed in full. How a unit renders
+depends on the job's apply state:
+
+  applied, unapplied  the desired unit, printed plainly
+  disabled            the desired unit (the one apply would install if enabled)
+  drifted             the whole unit rendered as a unified diff: installed lines
+                      marked -, desired lines marked +, with a "--- "/"+++ " file
+                      header but no @@ hunk headers
+  orphaned            the installed unit, printed plainly (no desired unit exists)
+
+Use it to verify the cron-to-OnCalendar translation, the resolved ExecStart, and
+the baked-in PATH before or after an apply.`,
+		Example: `
+acron show nightly-triage  # The generated unit and its apply state
+acron show backup          # On drift, the installed - / desired + delta, inline
+`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeJobNames,
 		RunE: func(_ *cobra.Command, args []string) error {

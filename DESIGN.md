@@ -109,12 +109,14 @@ atomically (no partial apply) on:
 | `acron apply [--dry-run]` | Reconcile OS units to the Config.                                                |
 | `acron destroy`           | Remove all acron-owned units from this machine; keep the Config.                 |
 | `acron run <job>`         | The entry the scheduler invokes; also runs a Job now, for testing.               |
+| `acron trigger <job>`     | Fire a Job now, out of schedule, in the background.                              |
 | `acron status`            | Table of each Job's Apply state, latest Run, and next fire (ADR-0011, ADR-0014). |
-| `acron logs <job> [run]`  | Show a Run's captured output (newest, or by index or timestamp).                 |
+| `acron show <job>`        | Show a Job's generated unit and whether it matches what is installed.            |
+| `acron logs <job> [run]`  | Show a Run's captured output (newest, or by timestamp).                          |
 | `acron logs <job> -f`     | Follow the Run in progress; stream until it finishes (ADR-0013).                 |
-| `acron history <job>`     | List a Job's past Runs (index, time, status).                                    |
+| `acron history [job]`     | List a Job's past Runs in a time-ordered table, newest first.                    |
 | `acron config show`       | Print the Config to stdout.                                                      |
-| `acron config edit`       | Open the Config in `$EDITOR`, validate on save.                                  |
+| `acron config edit`       | Open the Config in `$VISUAL`/`$EDITOR`, validate on save.                        |
 
 Verb choice follows the on-demand declarative-reconcile idiom (`apply`/`destroy`
 from Terraform; `apply` also matches chezmoi). `install`/`uninstall`/`sync` were
@@ -209,9 +211,9 @@ A `skipped` record carries a `reason` (`overlap` or `condition`) and no `log`;
 condition failures carry `reason: condition` with `status: failure` and a log.
 `acron status` reads the last record per Job for its Run-status column; `acron
 history` lists a Job's records, and `acron logs` reads them to resolve the
-requested Run (newest by default, or the Nth most recent by index, or an exact
-timestamp). `acron logs --follow` instead reads the in-flight Run's log name
-from the lock file and streams it until the Run finishes (ADR-0013).
+requested Run (newest by default, or an exact timestamp). `acron logs
+--follow` instead reads the in-flight Run's log name from the lock file and
+streams it until the Run finishes (ADR-0013).
 
 ## Environment
 

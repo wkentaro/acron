@@ -279,8 +279,56 @@ acron logs nightly-triage --follow              # Stream the run in progress unt
 func newHistoryCmd() *cobra.Command {
 	var limit int
 	cmd := &cobra.Command{
-		Use:               "history [job]",
-		Short:             "List past runs, newest first",
+		Use:   "history [job]",
+		Short: "List past runs, newest first",
+		Long: `List every Job's Runs as a single time-ordered table, newest first, one row
+per Run.
+
+Defaults to the 20 most recent Runs across all Jobs; --limit N sets the count
+and --limit 0 removes the cap. The table is interleaved, not grouped by Job:
+'acron history <job>' is the same table filtered to one Job, with the JOB column
+kept, so the filtered view has the identical shape to the unfiltered one: a
+filter, not a separate view. A skipped Run appears like any other; it is a real
+outcome, and hiding it would let 'history' and 'status' disagree about the
+latest Run.
+
+Columns:
+
+  JOB       The Job's name; kept even when filtered to one Job, so the table
+            shape is identical whether filtered or not.
+
+  WHEN      Absolute start time of the Run (2006-01-02 15:04:05, local time).
+            This exact string is the 'acron logs' run selector: 'acron logs
+            <job> "<WHEN>"' opens that Run's output, and the string printed here
+            is the string 'logs' accepts, so copy-paste round-trips.
+
+  PASSED    Elapsed since the Run started (e.g. 2h 15min ago); the same format
+            'acron status' carries.
+
+  STATUS    The Run's outcome:
+              success                     the agent exited zero
+              failure                     the agent exited non-zero
+              timeout                     the Run exceeded its timeout
+              skipped (overlap)           the previous Run still held the lock,
+                                          so this firing was dropped
+              skipped (condition)         the Condition returned a clean
+                                          negative; no agent ran
+              skipped (condition, output) the Condition also wrote to stderr,
+                                          which usually means the check is broken
+              interrupted                 the operator aborted it before a
+                                          verdict
+              running                     the agent is running now
+            'running' is a live state synthesized from the held lock, never a
+            stored value; it sorts to the top of the table. It appears only once
+            the agent has started; a Run still in its Condition check has no
+            WHEN yet and does not appear.
+
+            A Condition check that breaks rather than returning a clean negative
+            surfaces under its own outcome, as failure (condition) or
+            interrupted (condition), not as a skip.
+
+  DURATION  How long the agent ran; — (no final duration) for a skipped Run,
+            whose agent never ran, and for the in-flight 'running' row.`,
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeJobNames,
 		Example: `

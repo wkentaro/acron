@@ -254,7 +254,23 @@ func newConfigShowCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show",
 		Short: "Print the config to stdout",
-		Args:  cobra.NoArgs,
+		Long: `Print the Config file to stdout.
+
+The Config is read from $ACRON_CONFIG, then $XDG_CONFIG_HOME/acron/config.toml,
+then ~/.config/acron/config.toml.
+
+The file is printed verbatim, with no validation. This is intentional: 'config
+show' is most useful exactly when the Config is broken, so a Config that fails
+to parse can still be inspected. The commands that consume the Config ('apply',
+'status', and the rest) validate it; 'config show' never does.
+
+If no Config exists, this errors with:
+
+  no config at <path>; run "acron config edit" to create one`,
+		Example: `
+acron config show
+`,
+		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			return runConfigShow()
 		},
@@ -265,7 +281,21 @@ func newConfigEditCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "edit",
 		Short: "Open the config in $EDITOR",
-		Args:  cobra.NoArgs,
+		Long: `Open the Config in an editor and validate it on save.
+
+The editor is the first of $VISUAL or $EDITOR that is set, falling back to vi.
+The Config path is resolved as for 'config show'. When the Config does not exist
+yet, the editor opens a commented template with example fields rather than an
+empty file.
+
+When you close the editor, the edited Config is validated. If validation fails,
+the error is printed and you are prompted 'Return to edit? [Y/n]'; the loop
+repeats until the Config is valid or you decline. The write is atomic, so a
+failed or declined edit leaves the original Config untouched.`,
+		Example: `
+acron config edit
+`,
+		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			return runEdit()
 		},

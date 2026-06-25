@@ -191,8 +191,57 @@ func newShowCmd() *cobra.Command {
 func newLogsCmd() *cobra.Command {
 	var follow bool
 	cmd := &cobra.Command{
-		Use:               "logs <job> [run]",
-		Short:             "Show a job's captured output",
+		Use:   "logs <job> [run]",
+		Short: "Show a job's captured output",
+		Long: `Show a Job's captured agent output for one Run.
+
+Run selector:
+
+  (none) / latest  The newest Run that produced output. A Run with no captured
+                   output is passed over for the newest one that has it.
+
+  <timestamp>      A specific Run, named by the WHEN value 'acron history'
+                   prints for it. The exact string history shows round-trips:
+                   'acron logs <job> "2026-06-22 02:00:00"' selects that Run.
+                   The timestamp is local time, in YYYY-MM-DD HH:MM:SS format.
+
+Output split:
+
+  Before the log body, logs prints one header line to stderr:
+
+    <job>  <WHEN>  <STATUS>  in <DURATION>
+
+  e.g. 'nightly-triage  2026-06-22 02:00:00  success  in 13min 48s'. Selecting the
+  live Run by its timestamp shows STATUS 'running' and a 'running for <elapsed>'
+  tail instead, since it has no final duration yet.
+
+  The header goes to stderr; the log body is the sole stdout payload. So
+  'acron logs <job> | grep …' and 'acron logs <job> > run.log' see the clean
+  log without the metadata line.
+
+--follow, -f:
+
+  Attaches to the Run currently in progress and streams its log from the start
+  of the Run until the Run finishes.
+
+  It accepts no selector or 'latest' (either one attaches to the live Run) and
+  rejects an explicit timestamp (a finished Run never grows, so following one is
+  meaningless). It requires a live Run: with nothing in flight it errors with
+  'no run in progress for "<job>"'.
+
+  If the lock is held but no agent log exists yet (the Condition check is still
+  running), it prints 'waiting for condition...' to stderr once and waits for
+  the agent to start.
+
+  On completion it prints a one-line footer to stderr:
+
+    run success in 4min 12s
+    run failure (exit 1) in 2min 3s
+    run skipped (condition)
+
+  An '(output)' note on a skipped footer (e.g. 'run skipped (condition,
+  output)') means the Condition check wrote to stderr, which usually means the
+  check is broken; read the log to see what it printed.`,
 		Args:              cobra.RangeArgs(1, 2),
 		ValidArgsFunction: completeJobNames,
 		Example: `

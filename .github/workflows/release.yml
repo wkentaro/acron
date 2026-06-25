@@ -1,0 +1,31 @@
+---
+name: release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build binaries
+        env:
+          CGO_ENABLED: 0
+        run: |
+          ldflags="-X github.com/wkentaro/acron/internal/cli.version=$(git describe --tags --always)"
+          for platform in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            export GOOS=${platform%/*} GOARCH=${platform#*/}
+            go build -trimpath -ldflags "$ldflags" -o "acron-$GOOS-$GOARCH" .
+          done
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: acron-*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

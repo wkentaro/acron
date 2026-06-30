@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-01
+
 ### Added
 
 - `acron config --help` now documents the full `[[job]]` config schema, rendered from the same source that seeds the `config edit` template (#92).
@@ -39,5 +41,6 @@ Initial release. acron is a command-line runtime that schedules unattended agent
 - Long help text and examples across the command set (#77, #78, #79, #80, #82, #87).
 - Version stamped via ldflags at release, with a module-version fallback for `go install` builds (#70, #81, #89).
 
-[unreleased]: https://github.com/wkentaro/acron/compare/v0.1.0...HEAD
+[unreleased]: https://github.com/wkentaro/acron/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/wkentaro/acron/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/wkentaro/acron/releases/tag/v0.1.0

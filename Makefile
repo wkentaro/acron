@@ -1,6 +1,6 @@
 SHELL := bash
 
-.PHONY: help build test coverage lint format
+.PHONY: help build test coverage lint format docs-status-svg
 .DEFAULT_GOAL := help
 
 # Run tasks through the nix dev shell. Inside the shell (tools already on PATH)
@@ -34,6 +34,13 @@ lint:  # Lint code and check formatting
 	$(call exec,dprint check)
 	$(call exec,yamlfmt -lint .)
 	$(call exec,yamllint .)
+
+# TZ=UTC pins the displayed times: the status renders convert each timestamp
+# through .Local(), so a fixed zone keeps the committed SVG reproducible.
+docs-status-svg:  # Regenerate docs/images/status.svg from a seeded acron status
+	$(call exec,TZ=UTC ACRON_STATUS_ANSI_OUT=/tmp/acron-status.ansi go test ./internal/cli -run TestGenerateStatusANSI -count=1)
+	$(call exec,freeze /tmp/acron-status.ansi --language ansi -o docs/images/status.svg --window --padding 20 --margin 0 --border.radius 8)
+	$(call exec,rm -f /tmp/acron-status.ansi)
 
 format:  # Format code
 	$(call exec,gofumpt -w .)

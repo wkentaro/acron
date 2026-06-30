@@ -14,6 +14,12 @@ Claude Code, Codex, opencode, or any CLI.
 Platform support: Linux (systemd user units) and macOS (launchd LaunchAgents).
 Windows is out of scope.
 
+`acron status` shows every Job's apply state, last Run, and next firing at a
+glance, color-coded green for healthy, red for drift or failure, and dim for
+times and pending work:
+
+![acron status listing three jobs: an applied job whose last run succeeded, an applied job that has never run, and a drifted job whose last run failed](docs/images/status.svg)
+
 ## Install
 
 ```sh

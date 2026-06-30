@@ -1,18 +1,22 @@
 # acron
 
-acron is a command-line runtime for unattended agent runs that happens to be
-scheduled cross-OS. It translates a Job (a schedule plus an agent command) into
-the native OS scheduler (systemd timers on Linux, launchd LaunchAgents on
-macOS) and stays in the runtime path: the generated unit runs `acron run
-<job>`, not the agent directly, so acron supervises every firing in-process.
-That is its reason to exist. Rather than leave overlap prevention, timeout, and
-log capture to schedulers that cover them unevenly, acron owns them itself and
-gives every Run one uniform set of guarantees plus a queryable run history.
+[![ci](https://github.com/wkentaro/acron/actions/workflows/ci.yml/badge.svg)](https://github.com/wkentaro/acron/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/wkentaro/acron.svg)](https://pkg.go.dev/github.com/wkentaro/acron)
+[![Go Report Card](https://goreportcard.com/badge/github.com/wkentaro/acron)](https://goreportcard.com/report/github.com/wkentaro/acron)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+**Cron for unattended agents. One schedule across macOS and Linux, with the
+supervision that schedulers leave out: overlap guards, timeouts, log capture,
+and a queryable run history.**
+
+acron compiles each Job (a cron schedule plus an agent command) into native OS
+scheduler units: systemd user timers on Linux, launchd LaunchAgents on macOS;
+Windows is out of scope. The generated unit runs `acron run <job>`, not your
+agent directly, so acron supervises every Run from inside the runtime path.
+There is no acron daemon; the OS scheduler fires each Run.
+
 acron is agent-agnostic: the agent is just a command to invoke, so it works with
 Claude Code, Codex, opencode, or any CLI.
-
-Platform support: Linux (systemd user units) and macOS (launchd LaunchAgents).
-Windows is out of scope.
 
 `acron status` shows every Job's apply state, last Run, and next firing at a
 glance, color-coded green for healthy, red for drift or failure, and dim for
@@ -41,6 +45,8 @@ To build from source, run `nix develop -c make build` inside the repository.
 
 ## Quickstart
 
+The first command opens your editor; the rest run to completion.
+
 ```sh
 acron config edit                 # 1. open $VISUAL/$EDITOR on a commented template (created if absent)
                                   # 2. uncomment the [[job]] block and edit its values
@@ -56,9 +62,38 @@ A minimal Job looks like this:
 [[job]]
 name     = "nightly-triage"       # required, unique, [a-z0-9_-]
 schedule = "0 2 * * *"            # required, 5-field cron
-agent    = ["claude", "-p", "{prompt}", "--dangerously-skip-permissions"]  # required argv; {prompt} is substituted
+agent    = ["claude", "-p", "{prompt}", "--dangerously-skip-permissions"]  # required; {prompt} substituted
 prompt   = "Triage open issues"   # required
 cwd      = "~/src/acron"          # required, absolute or ~-expanded
+```
+
+## What you get per Run
+
+Every firing goes through `acron run`, so each Run gets the same supervision no
+matter how it was scheduled:
+
+- **Overlap prevention**: a per-job lock; if the previous Run still holds it, the
+  new firing is skipped, not stacked on top.
+- **Timeout**: the agent gets `SIGTERM` after `timeout` (default `1h`), then
+  `SIGKILL` if it ignores it, so a hung run cannot block the next one.
+- **Log capture**: stdout and stderr of every Run are saved under the state dir
+  and replayable with `acron logs`.
+- **Run history**: every Run is appended to `history.jsonl`, queryable from the
+  CLI or with `jq`.
+
+`acron history` makes all four visible at once:
+
+```text
+JOB             WHEN                 PASSED   STATUS             DURATION
+nightly-triage  2026-06-30 23:00:55  10s ago  skipped (overlap)  —
+nightly-triage  2026-06-30 23:00:54  11s ago  success            3s
+nightly-triage  2026-06-30 23:00:51  14s ago  success            3s
+```
+
+The same records live in `history.jsonl`, one JSON object per line, for scripting:
+
+```sh
+jq 'select(.status == "skipped")' ~/.local/state/acron/runs/nightly-triage/history.jsonl
 ```
 
 ## Config reference
@@ -118,3 +153,14 @@ units    Linux:  ~/.config/systemd/user/acron-<job>.service
 ```
 
 State honors `$XDG_STATE_HOME` and config honors `$XDG_CONFIG_HOME` when set.
+
+## Contributing
+
+Development uses a Nix devshell that pins the whole toolchain (go, gofumpt,
+golangci-lint, dprint, yamlfmt, yamllint). List targets with `nix develop -c
+make help`, and verify a change with `nix develop -c make lint && nix develop -c
+make test` before sending it. See [DESIGN.md](DESIGN.md) for the architecture.
+
+## License
+
+[MIT](LICENSE) © Kentaro Wada

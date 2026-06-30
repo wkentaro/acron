@@ -50,46 +50,22 @@ Resolution order for the Config path:
 Project-local Jobs are not auto-discovered. A project carries its own Config and
 points acron at it via `ACRON_CONFIG=<repo>/acron_config.toml` (ADR-0003).
 
-### Schema
+### Schema and fields
 
-```toml
-[[job]]
-name     = "nightly-triage"   # required, unique, [a-z0-9_-]
-schedule = "0 2 * * *"        # required, 5-field cron (calendar semantics)
-agent    = ["claude", "-p", "{prompt}", "--dangerously-skip-permissions", "--verbose", "--output-format", "stream-json"]
-prompt   = "Triage open issues"  # required
-cwd      = "~/src/acron"      # required, absolute or ~-expanded
-enabled  = true               # optional, default true
-timeout  = "1h"               # optional, default "1h"; 0 disables the timeout
-env      = { TZ = "Asia/Tokyo" }  # optional, portable extra vars
-condition = ["sh", "-c", "gh pr list | grep -q ."]  # optional gate; skip unless exit 0
-```
+For the field reference — every field, its type, default, and semantics — run
+`acron config --help`; the schema has a single source of truth in the binary
+(`jobFieldReference`), which also seeds `acron config edit`.
+Per-field design decisions live in their ADRs: cron-only scheduling (ADR-0005);
+direct-exec `agent` with no presets, and `{prompt}` substituted into `agent` or
+appended when the token is absent (ADR-0004); and the gating `condition`, run
+before the agent and mapped exit `0` → run, `1`-`254` → `skipped`, `255`/signal
+→ `failure` (ADR-0010, detailed under Runtime). Two choices not separately
+recorded:
 
-### Fields
-
-- **name**: identifies the Job. Becomes part of unit names, lock file names, and
-  log directory names, so it is restricted to `[a-z0-9_-]`. Must be unique
-  within the Config.
-- **schedule**: a standard 5-field cron expression with calendar (wall-clock)
-  semantics. Relative-interval scheduling is not supported (ADR-0005).
-- **agent**: the argv array (command plus flags) acron executes directly, with
-  no shell. No agent presets exist; the user supplies the flags (ADR-0004).
-- **prompt**: substituted for a `{prompt}` token in `agent`. If no `{prompt}`
-  token is present, the prompt is appended as the final argument (ADR-0004).
-- **cwd**: required. `acron apply` errors if a Job omits it. acron `chdir`s here
-  before exec. `~` is expanded.
-- **enabled**: optional, default `true`. `enabled = false` reconciles the unit
-  off without removing the Job from the Config. There are no `enable`/`disable`
-  commands; the field is the off switch (declarative reconcile has no imperative
-  toggle).
-- **timeout**: optional, default `"1h"`. Go duration string. `0` opts out
-  explicitly (accepting the wedge risk below).
-- **env**: optional table of extra environment variables, merged on top of the
-  baked PATH and HOME/USER.
-- **condition**: optional argv run at fire time, before the agent, with the same
-  `cwd` and `env` (no `{prompt}` substitution). Exit `0` runs the agent; `1`-`254`
-  drops the firing as `skipped`; `255`/signal records a `failure`. Lets a Job be
-  scheduled often but do work only when there is work to do (ADR-0010).
+- **name** is embedded in unit, lock, and log file names, so it is restricted to
+  `[a-z0-9_-]` and must be unique within the Config.
+- **enabled = false** reconciles a Job's unit off without removing it from the
+  Config; there is no imperative `enable`/`disable`, the field is the off switch.
 
 ### Validation
 
@@ -104,23 +80,12 @@ atomically (no partial apply) on:
 
 ## CLI
 
-| Command                   | Purpose                                                                          |
-| ------------------------- | -------------------------------------------------------------------------------- |
-| `acron apply [--dry-run]` | Reconcile OS units to the Config.                                                |
-| `acron destroy`           | Remove all acron-owned units from this machine; keep the Config.                 |
-| `acron run <job>`         | The entry the scheduler invokes; also runs a Job now, for testing.               |
-| `acron trigger <job>`     | Fire a Job now, out of schedule, in the background.                              |
-| `acron status`            | Table of each Job's Apply state, latest Run, and next fire (ADR-0011, ADR-0014). |
-| `acron show <job>`        | Show a Job's generated unit and whether it matches what is installed.            |
-| `acron logs <job> [run]`  | Show a Run's captured output (newest, or by timestamp).                          |
-| `acron logs <job> -f`     | Follow the Run in progress; stream until it finishes (ADR-0013).                 |
-| `acron history [job]`     | List a Job's past Runs in a time-ordered table, newest first.                    |
-| `acron config show`       | Print the Config to stdout.                                                      |
-| `acron config edit`       | Open the Config in `$VISUAL`/`$EDITOR`, validate on save.                        |
-
-Verb choice follows the on-demand declarative-reconcile idiom (`apply`/`destroy`
-from Terraform; `apply` also matches chezmoi). `install`/`uninstall`/`sync` were
-rejected (ADR-0008).
+The full command list, with flags, is in the README's Commands section and
+`acron --help` (and `acron <command> --help` per command). Verb choice follows the on-demand
+declarative-reconcile idiom (`apply`/`destroy` from Terraform; `apply` also
+matches chezmoi). `install`/`uninstall`/`sync` were rejected (ADR-0008). The
+subsections below specify the commands whose behavior is more than their
+one-line purpose.
 
 ### apply
 

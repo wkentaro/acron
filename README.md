@@ -26,8 +26,16 @@ times and pending work:
 go install github.com/wkentaro/acron@latest
 ```
 
-Or download a prebuilt binary from the [GitHub Releases][releases]. To build from
-source, run `nix develop -c make build` inside the repository.
+Or download a prebuilt binary from the [GitHub Releases][releases]:
+
+```sh
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
+arch=$(uname -m); [ "$arch" = x86_64 ] && arch=amd64
+curl -fL https://github.com/wkentaro/acron/releases/latest/download/acron-$os-$arch -o acron
+chmod +x acron && sudo mv acron /usr/local/bin/
+```
+
+To build from source, run `nix develop -c make build` inside the repository.
 
 [releases]: https://github.com/wkentaro/acron/releases
 

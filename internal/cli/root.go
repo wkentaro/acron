@@ -4,11 +4,27 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	"github.com/spf13/cobra"
 )
 
 var version = "0.0.0-dev" // set by -ldflags at build time
+
+// resolveVersion prefers the ldflags-injected version used by release and make
+// build. When that is absent (a plain `go install module@version`), it falls
+// back to the module version the Go toolchain records in the build info so an
+// installed binary reports its release tag rather than the dev placeholder.
+func resolveVersion() string {
+	if version != "0.0.0-dev" {
+		return version
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info.Main.Version == "" || info.Main.Version == "(devel)" {
+		return version
+	}
+	return info.Main.Version
+}
 
 // errInterrupted marks a `run` aborted by Ctrl-C (SIGINT/SIGTERM). The Run is
 // already recorded and reported as interrupted, so Execute only translates it
@@ -29,10 +45,11 @@ func Execute() {
 
 func newRootCmd() *cobra.Command {
 	cobra.EnableCommandSorting = false
+	resolvedVersion := resolveVersion()
 	root := &cobra.Command{
 		Use:           "acron",
 		Short:         "Schedule an agent prompt to run periodically across systemd and launchd.",
-		Version:       version,
+		Version:       resolvedVersion,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Example: `
@@ -48,7 +65,7 @@ acron destroy               # Remove all acron units (keep config)
 	}
 	root.PersistentFlags().BoolP("help", "h", false, "Print help")
 	root.Flags().BoolP("version", "V", false, "Print version")
-	root.SetVersionTemplate("acron " + commentStyle.Render(version) + "\n")
+	root.SetVersionTemplate("acron " + commentStyle.Render(resolvedVersion) + "\n")
 
 	root.AddCommand(
 		newApplyCmd(),

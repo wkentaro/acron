@@ -102,17 +102,10 @@ The Config is a single TOML file declaring all Jobs. Its path is resolved in
 order: `$ACRON_CONFIG` if set, otherwise `~/.config/acron/config.toml`
 (honoring `$XDG_CONFIG_HOME` when set).
 
-| Field       | Type     | Required | Default | Description                                                                                         |
-| ----------- | -------- | -------- | ------- | --------------------------------------------------------------------------------------------------- |
-| `name`      | string   | yes      | —       | Unique Job name, restricted to `[a-z0-9_-]`.                                                        |
-| `schedule`  | string   | yes      | —       | 5-field cron expression with calendar (wall-clock) semantics.                                       |
-| `agent`     | array    | yes      | —       | Argv (command plus flags) run directly, no shell. `{prompt}` is substituted.                        |
-| `prompt`    | string   | yes      | —       | Substituted for the `{prompt}` token, or appended if no token is present.                           |
-| `cwd`       | string   | yes      | —       | Working directory acron chdirs into. Absolute or `~`-expanded.                                      |
-| `enabled`   | bool     | no       | `true`  | `false` reconciles the unit off without removing the Job.                                           |
-| `timeout`   | duration | no       | `"1h"`  | Go duration string; `"0"` disables the timeout.                                                     |
-| `env`       | table    | no       | `{}`    | Extra environment variables merged on top of the baked PATH and HOME/USER.                          |
-| `condition` | array    | no       | —       | Argv run before the agent; exit `0` runs it, `1`-`254` skips the firing, `255`/signal is a failure. |
+Run `acron config --help` for the full annotated field reference — every
+required and optional field, its default, and its semantics — always matching
+your installed version. `acron config edit` opens the same template ready to
+fill in.
 
 ## PATH
 

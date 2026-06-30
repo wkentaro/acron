@@ -24,6 +24,7 @@
             pkgs.dprint
             pkgs.yamlfmt
             pkgs.yamllint
+            pkgs.charm-freeze
           ];
         };
       });

@@ -494,10 +494,32 @@ acron history --limit 0       # Show all
 	return cmd
 }
 
+// jobFieldReference is the [[job]] schema, shared by 'config edit's seed
+// template and 'config --help' so the documented fields stay in sync.
+const jobFieldReference = `# [[job]]
+# name     = "nightly-triage"             # required, unique, [a-z0-9_-]
+# schedule = "0 2 * * *"                  # required, 5-field cron
+# agent    = ["claude", "-p", "{prompt}", "--dangerously-skip-permissions", "--verbose", "--output-format", "stream-json"] # required argv; {prompt} is substituted
+#   stream-json gives live output for long sessions; for a short session, drop --verbose/--output-format for plain-text logs
+# prompt   = "Triage open issues"         # required
+# cwd      = "~/src/acron"                # required, absolute or ~-expanded
+# enabled  = true                         # optional, default true
+# timeout  = "1h"                         # optional, default "1h"; 0 disables
+# env      = { TZ = "Asia/Tokyo" }        # optional, extra environment vars
+# condition = ["sh", "-c", "gh pr list | grep -q ."] # optional gate; skip agent unless exit 0
+`
+
 func newConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Show or edit the config",
+		Long: `Show or edit the Config: the single TOML file declaring all Jobs.
+
+Resolved from $ACRON_CONFIG, then $XDG_CONFIG_HOME/acron/config.toml, then
+~/.config/acron/config.toml. Each [[job]] table declares one Job:
+
+` + jobFieldReference + `
+Run 'acron apply' after editing so the OS scheduler units match the Config.`,
 	}
 	cmd.AddCommand(newConfigShowCmd(), newConfigEditCmd())
 	return cmd
@@ -1331,25 +1353,14 @@ func runEdit() error {
 }
 
 func initialBuffer(path string) ([]byte, error) {
-	const configTemplate = `# acron config: each [[job]] schedules an agent to run on a cron schedule.
+	const intro = `# acron config: each [[job]] schedules an agent to run on a cron schedule.
 # Uncomment the example below, edit the values, and save. Field docs:
 # https://github.com/wkentaro/acron
 #
-# [[job]]
-# name     = "nightly-triage"             # required, unique, [a-z0-9_-]
-# schedule = "0 2 * * *"                  # required, 5-field cron
-# agent    = ["claude", "-p", "{prompt}", "--dangerously-skip-permissions", "--verbose", "--output-format", "stream-json"] # required argv; {prompt} is substituted
-#   stream-json gives live output for long sessions; for a short session, drop --verbose/--output-format for plain-text logs
-# prompt   = "Triage open issues"         # required
-# cwd      = "~/src/acron"                # required, absolute or ~-expanded
-# enabled  = true                         # optional, default true
-# timeout  = "1h"                         # optional, default "1h"; 0 disables
-# env      = { TZ = "Asia/Tokyo" }        # optional, extra environment vars
-# condition = ["sh", "-c", "gh pr list | grep -q ."] # optional gate; skip agent unless exit 0
 `
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return []byte(configTemplate), nil
+		return []byte(intro + jobFieldReference), nil
 	}
 	return data, err
 }

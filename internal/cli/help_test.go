@@ -24,6 +24,22 @@ func TestRenderHelpShowsCompletionInstallInstructions(t *testing.T) {
 	}
 }
 
+func TestConfigHelpShowsJobSchema(t *testing.T) {
+	root := newRootCmd()
+	cmd, _, err := root.Find([]string{"config"})
+	if err != nil {
+		t.Fatalf("find config: %v", err)
+	}
+
+	out := renderHelp(cmd)
+
+	for _, field := range []string{"[[job]]", "schedule", "agent", "prompt", "cwd", "enabled", "timeout", "env", "condition"} {
+		if !strings.Contains(out, field) {
+			t.Errorf("config help missing %q field:\n%s", field, out)
+		}
+	}
+}
+
 func TestRenderHelpFallsBackToShortWithoutLong(t *testing.T) {
 	cmd := &cobra.Command{Short: "Show each job's apply state and last run"}
 

@@ -24,8 +24,21 @@ jobs:
             export GOOS=${platform%/*} GOARCH=${platform#*/}
             go build -trimpath -ldflags "$ldflags" -o "acron-$GOOS-$GOARCH" .
           done
+      - name: Extract release notes from CHANGELOG
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v ver="$version" '
+            $0 ~ "^## \\[" ver "\\]" {flag=1; next}
+            flag && (/^## \[/ || /^\[[^]]+\]:/) {exit}
+            flag {buf = buf $0 "\n"}
+            END { sub(/^\n+/, "", buf); sub(/\n+$/, "\n", buf); printf "%s", buf }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::no CHANGELOG.md section for $version; promote [Unreleased] before tagging"
+            exit 1
+          fi
       - uses: softprops/action-gh-release@v2
         with:
           files: acron-*
-          generate_release_notes: true
+          body_path: release-notes.md
           fail_on_unmatched_files: true

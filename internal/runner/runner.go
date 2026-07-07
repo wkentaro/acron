@@ -21,6 +21,14 @@ import (
 // time with the exact layout used to format it.
 const LogTimestampLayout = "2006-01-02T15-04-05"
 
+// LogExt is the other half of the log-filename contract: paired with
+// LogTimestampLayout it is what writers create and readers parse back.
+const LogExt = ".log"
+
+func logFileName(start time.Time) string {
+	return start.Format(LogTimestampLayout) + LogExt
+}
+
 const (
 	killGrace = 10 * time.Second
 	keepRuns  = 50
@@ -101,7 +109,7 @@ func runAgent(ctx context.Context, job config.Job, timeout time.Duration, lock *
 	}
 
 	start := time.Now()
-	logName := start.Format(LogTimestampLayout) + ".log"
+	logName := logFileName(start)
 	// Stamp the live-log name before the file exists on disk, so it is never a
 	// deletion candidate that a concurrent overlap-skip's prune cannot see as
 	// live. The follower tolerates this gap (the stamp may briefly name a file
@@ -318,7 +326,7 @@ func recordConditionOutcome(job string, start time.Time, status Status, exit int
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
 		return Result{}, err
 	}
-	logName := start.Format(LogTimestampLayout) + ".log"
+	logName := logFileName(start)
 	if err := os.WriteFile(filepath.Join(runsDir, logName), output, 0o644); err != nil {
 		return Result{}, err
 	}
@@ -419,7 +427,7 @@ func RunningSince(job string) (time.Time, bool) {
 	if logName == "" {
 		return time.Time{}, true
 	}
-	start, err := time.ParseInLocation(LogTimestampLayout, strings.TrimSuffix(logName, ".log"), time.Local)
+	start, err := time.ParseInLocation(LogTimestampLayout, strings.TrimSuffix(logName, LogExt), time.Local)
 	if err != nil {
 		return time.Time{}, true
 	}
@@ -537,7 +545,7 @@ func pruneRuns(job string) {
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if strings.HasSuffix(name, ".log") && !referenced[name] {
+		if strings.HasSuffix(name, LogExt) && !referenced[name] {
 			_ = os.Remove(filepath.Join(dir, name))
 		}
 	}

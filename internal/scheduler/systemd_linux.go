@@ -301,9 +301,8 @@ func ownedJobs() ([]string, error) {
 	}
 	var jobs []string
 	for _, entry := range entries {
-		name := entry.Name()
-		if strings.HasPrefix(name, "acron-") && strings.HasSuffix(name, ".timer") {
-			jobs = append(jobs, strings.TrimSuffix(strings.TrimPrefix(name, "acron-"), ".timer"))
+		if job, ok := paths.TimerJobName(entry.Name()); ok {
+			jobs = append(jobs, job)
 		}
 	}
 	return jobs, nil

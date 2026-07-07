@@ -61,12 +61,22 @@ func SystemdUserDir() string {
 	return filepath.Join(home, ".config", "systemd", "user")
 }
 
+const unitPrefix = "acron-"
+
 func ServiceName(job string) string {
-	return "acron-" + job + ".service"
+	return unitPrefix + job + ".service"
 }
 
 func TimerName(job string) string {
-	return "acron-" + job + ".timer"
+	return unitPrefix + job + ".timer"
+}
+
+func TimerJobName(filename string) (string, bool) {
+	base, ok := strings.CutSuffix(filename, ".timer")
+	if !ok {
+		return "", false
+	}
+	return strings.CutPrefix(base, unitPrefix)
 }
 
 func ServicePath(job string) string {

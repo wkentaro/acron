@@ -102,3 +102,36 @@ func TestPlistLabelJobNameRoundTrip(t *testing.T) {
 		t.Errorf("round trip of %q = (%q, %v), want (%q, true)", job, got, ok, job)
 	}
 }
+
+func TestTimerJobName(t *testing.T) {
+	tests := []struct {
+		name     string
+		filename string
+		wantJob  string
+		wantOk   bool
+	}{
+		{"acron timer", "acron-nightly-triage.timer", "nightly-triage", true},
+		{"foreign app", "other-app.timer", "", false},
+		{"missing .timer suffix", "acron-nightly-triage", "", false},
+		{"prefix collision without separator", "acronsomething.timer", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			job, ok := TimerJobName(tt.filename)
+			if ok != tt.wantOk {
+				t.Fatalf("TimerJobName(%q) ok = %v, want %v", tt.filename, ok, tt.wantOk)
+			}
+			if ok && job != tt.wantJob {
+				t.Errorf("TimerJobName(%q) job = %q, want %q", tt.filename, job, tt.wantJob)
+			}
+		})
+	}
+}
+
+func TestTimerNameJobNameRoundTrip(t *testing.T) {
+	job := "nightly-triage"
+	got, ok := TimerJobName(TimerName(job))
+	if !ok || got != job {
+		t.Errorf("round trip of %q = (%q, %v), want (%q, true)", job, got, ok, job)
+	}
+}

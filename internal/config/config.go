@@ -125,6 +125,8 @@ func validateJob(job Job, index int, seen map[string]bool) []string {
 
 	if len(job.Agent) == 0 {
 		report("agent is required")
+	} else if job.Agent[0] == "" {
+		report("agent command is empty")
 	}
 
 	if job.Prompt == "" {

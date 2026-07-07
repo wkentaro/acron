@@ -28,6 +28,7 @@ func TestValidate(t *testing.T) {
 		{"missing schedule", func(j *Job) { j.Schedule = "" }, true},
 		{"bad schedule", func(j *Job) { j.Schedule = "not cron" }, true},
 		{"empty agent", func(j *Job) { j.Agent = nil }, true},
+		{"empty agent command", func(j *Job) { j.Agent = []string{""} }, true},
 		{"missing prompt", func(j *Job) { j.Prompt = "" }, true},
 		{"missing cwd", func(j *Job) { j.Cwd = "" }, true},
 		{"nonexistent cwd", func(j *Job) { j.Cwd = dir + "/nope" }, true},

@@ -8,6 +8,10 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- `acron apply`/`config edit` now reject a Job whose `agent` command name is empty (`agent = [""]`) at validation time, instead of accepting the config and failing at every firing ([#103](https://github.com/wkentaro/acron/pull/103)).
+
 ## [0.1.1] - 2026-07-01
 
 ### Added

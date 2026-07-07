@@ -108,3 +108,19 @@ func TestIsEnabledDefaultsTrue(t *testing.T) {
 		t.Error("enabled=false should report disabled")
 	}
 }
+
+func TestJobLookup(t *testing.T) {
+	cfg := &Config{Jobs: []Job{{Name: "alpha"}, {Name: "beta"}}}
+
+	job, err := cfg.Job("beta")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if job.Name != "beta" {
+		t.Errorf("Job(\"beta\").Name = %q, want %q", job.Name, "beta")
+	}
+
+	if _, err := cfg.Job("missing"); err == nil {
+		t.Error("expected error for absent job")
+	}
+}

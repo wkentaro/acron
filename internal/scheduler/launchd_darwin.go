@@ -103,10 +103,10 @@ func Show(cfg *config.Config, name string) (*JobUnits, error) {
 		return nil, err
 	}
 
-	job, ok := cfg.FindJob(name)
-	if !ok {
+	job, err := cfg.Job(name)
+	if err != nil {
 		if !installed {
-			return nil, fmt.Errorf("no job named %q", name)
+			return nil, err
 		}
 		plistContent, err := readUnit(paths.PlistPath(name))
 		if err != nil {

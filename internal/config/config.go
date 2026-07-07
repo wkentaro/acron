@@ -34,13 +34,13 @@ func (j Job) IsEnabled() bool {
 	return j.Enabled == nil || *j.Enabled
 }
 
-func (c *Config) FindJob(name string) (Job, bool) {
+func (c *Config) Job(name string) (Job, error) {
 	for _, job := range c.Jobs {
 		if job.Name == name {
-			return job, true
+			return job, nil
 		}
 	}
-	return Job{}, false
+	return Job{}, fmt.Errorf("no job named %q", name)
 }
 
 const DefaultTimeout = time.Hour

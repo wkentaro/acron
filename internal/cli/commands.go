@@ -1280,7 +1280,7 @@ func inflightRecord(job string) (runner.Record, bool) {
 // form acron displays or the legacy log-filename form. Both are local
 // wall-clock, matching how runs are displayed and how log files are named.
 func parseSelectorTime(timestamp string) (time.Time, bool) {
-	timestamp = strings.TrimSuffix(timestamp, ".log")
+	timestamp = strings.TrimSuffix(timestamp, runner.LogExt)
 	for _, layout := range []string{displayTimeFormat, runner.LogTimestampLayout} {
 		if t, err := time.ParseInLocation(layout, timestamp, time.Local); err == nil {
 			return t, true

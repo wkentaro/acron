@@ -11,6 +11,7 @@ and this project adheres to
 ### Fixed
 
 - `acron apply`/`config edit` now reject a Job whose `agent` command name is empty (`agent = [""]`) at validation time, instead of accepting the config and failing at every firing ([#103](https://github.com/wkentaro/acron/pull/103)).
+- `acron apply`/`config edit` now reject a negative `timeout` (e.g. `timeout = "-5m"`) at validation time; it previously passed validation but silently ran the agent unbounded, defeating the timeout guarantee (`0` remains the explicit opt-out) ([#108](https://github.com/wkentaro/acron/pull/108)).
 
 ## [0.1.1] - 2026-07-01
 

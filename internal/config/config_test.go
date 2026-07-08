@@ -33,6 +33,8 @@ func TestValidate(t *testing.T) {
 		{"missing cwd", func(j *Job) { j.Cwd = "" }, true},
 		{"nonexistent cwd", func(j *Job) { j.Cwd = dir + "/nope" }, true},
 		{"bad timeout", func(j *Job) { j.Timeout = "soon" }, true},
+		{"negative timeout", func(j *Job) { j.Timeout = "-5m" }, true},
+		{"zero timeout opts out", func(j *Job) { j.Timeout = "0" }, false},
 		{"valid condition", func(j *Job) { j.Condition = []string{"sh", "-c", "true"} }, false},
 		{"empty condition command", func(j *Job) { j.Condition = []string{""} }, true},
 	}

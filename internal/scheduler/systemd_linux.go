@@ -120,11 +120,7 @@ func Show(cfg *config.Config, name string) (*JobUnits, error) {
 		if !installed {
 			return nil, err
 		}
-		svcContent, err := readUnit(paths.ServicePath(name))
-		if err != nil {
-			return nil, err
-		}
-		tmrContent, err := readUnit(paths.TimerPath(name))
+		svcContent, tmrContent, err := readInstalledUnits(name)
 		if err != nil {
 			return nil, err
 		}
@@ -142,11 +138,7 @@ func Show(cfg *config.Config, name string) (*JobUnits, error) {
 	if err != nil {
 		return nil, err
 	}
-	svcContent, err := readUnit(paths.ServicePath(name))
-	if err != nil {
-		return nil, err
-	}
-	tmrContent, err := readUnit(paths.TimerPath(name))
+	svcContent, tmrContent, err := readInstalledUnits(name)
 	if err != nil {
 		return nil, err
 	}
@@ -218,10 +210,7 @@ func convergeChange(job, service, timer string, installed, unchanged bool) (Plan
 	svcInstalled, tmrInstalled := "", ""
 	if installed && !unchanged {
 		var err error
-		if svcInstalled, err = readUnit(paths.ServicePath(job)); err != nil {
-			return PlanChange{}, err
-		}
-		if tmrInstalled, err = readUnit(paths.TimerPath(job)); err != nil {
+		if svcInstalled, tmrInstalled, err = readInstalledUnits(job); err != nil {
 			return PlanChange{}, err
 		}
 	}
@@ -238,11 +227,7 @@ func convergeChange(job, service, timer string, installed, unchanged bool) (Plan
 // removeChange captures an orphaned Job's installed unit content so a dry-run
 // caller can render the planned prune as an all-red diff against /dev/null.
 func removeChange(job string) (PlanChange, error) {
-	svc, err := readUnit(paths.ServicePath(job))
-	if err != nil {
-		return PlanChange{}, err
-	}
-	tmr, err := readUnit(paths.TimerPath(job))
+	svc, tmr, err := readInstalledUnits(job)
 	if err != nil {
 		return PlanChange{}, err
 	}
@@ -253,6 +238,18 @@ func removeChange(job string) (PlanChange, error) {
 			{Name: paths.TimerName(job), Installed: tmr},
 		},
 	}, nil
+}
+
+// readInstalledUnits reads the installed service and timer content for a Job,
+// propagating any non-NotExist read error.
+func readInstalledUnits(job string) (service, timer string, err error) {
+	if service, err = readUnit(paths.ServicePath(job)); err != nil {
+		return "", "", err
+	}
+	if timer, err = readUnit(paths.TimerPath(job)); err != nil {
+		return "", "", err
+	}
+	return service, timer, nil
 }
 
 func fileEquals(path, content string) bool {

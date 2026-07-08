@@ -102,9 +102,14 @@ func Run(ctx context.Context, job config.Job) (Result, error) {
 	return runAgent(ctx, job, timeout, lock)
 }
 
+func ensureRunsDir(job string) (string, error) {
+	dir := paths.RunsDir(job)
+	return dir, os.MkdirAll(dir, 0o755)
+}
+
 func runAgent(ctx context.Context, job config.Job, timeout time.Duration, lock *os.File) (Result, error) {
-	runsDir := paths.RunsDir(job.Name)
-	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+	runsDir, err := ensureRunsDir(job.Name)
+	if err != nil {
 		return Result{}, err
 	}
 
@@ -322,8 +327,8 @@ func execCondition(ctx context.Context, job config.Job, timeout time.Duration, s
 // the reason (a broken check, an interrupt mid-check, or a skip whose tooling
 // misfired) is discoverable via `acron logs`.
 func recordConditionOutcome(job string, start time.Time, status Status, exit int, output []byte) (Result, error) {
-	runsDir := paths.RunsDir(job)
-	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+	runsDir, err := ensureRunsDir(job)
+	if err != nil {
 		return Result{}, err
 	}
 	logName := logFileName(start)
@@ -460,7 +465,7 @@ func jobEnv(job config.Job) []string {
 }
 
 func appendHistory(job string, rec Record) error {
-	if err := os.MkdirAll(paths.RunsDir(job), 0o755); err != nil {
+	if _, err := ensureRunsDir(job); err != nil {
 		return err
 	}
 	file, err := os.OpenFile(paths.HistoryPath(job), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)

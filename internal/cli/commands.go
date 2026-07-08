@@ -99,10 +99,8 @@ func requireJob(name string) error {
 	if err != nil {
 		return err
 	}
-	if _, ok := cfg.FindJob(name); !ok {
-		return fmt.Errorf("no job named %q", name)
-	}
-	return nil
+	_, err = cfg.Job(name)
+	return err
 }
 
 func loadAndValidate(path string) (*config.Config, error) {
@@ -608,9 +606,9 @@ func runJob(name string) error {
 	if err != nil {
 		return err
 	}
-	job, ok := cfg.FindJob(name)
-	if !ok {
-		return fmt.Errorf("no job named %q", name)
+	job, err := cfg.Job(name)
+	if err != nil {
+		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -1102,9 +1100,9 @@ func runHistory(name string, limit int) error {
 	if name == "" {
 		jobs = cfg.Jobs
 	} else {
-		job, ok := cfg.FindJob(name)
-		if !ok {
-			return fmt.Errorf("no job named %q", name)
+		job, err := cfg.Job(name)
+		if err != nil {
+			return err
 		}
 		jobs = []config.Job{job}
 	}

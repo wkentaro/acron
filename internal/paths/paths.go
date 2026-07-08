@@ -35,6 +35,14 @@ func LaunchAgentsDir() string {
 	return filepath.Join(home, "Library", "LaunchAgents")
 }
 
+func jobName(filename, suffix, prefix string) (string, bool) {
+	base, ok := strings.CutSuffix(filename, suffix)
+	if !ok {
+		return "", false
+	}
+	return strings.CutPrefix(base, prefix)
+}
+
 const labelPrefix = "com.acron."
 
 func PlistLabel(job string) string {
@@ -42,11 +50,7 @@ func PlistLabel(job string) string {
 }
 
 func PlistJobName(filename string) (string, bool) {
-	base, ok := strings.CutSuffix(filename, ".plist")
-	if !ok {
-		return "", false
-	}
-	return strings.CutPrefix(base, labelPrefix)
+	return jobName(filename, ".plist", labelPrefix)
 }
 
 func PlistPath(job string) string {
@@ -72,11 +76,7 @@ func TimerName(job string) string {
 }
 
 func TimerJobName(filename string) (string, bool) {
-	base, ok := strings.CutSuffix(filename, ".timer")
-	if !ok {
-		return "", false
-	}
-	return strings.CutPrefix(base, unitPrefix)
+	return jobName(filename, ".timer", unitPrefix)
 }
 
 func ServicePath(job string) string {

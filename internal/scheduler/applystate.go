@@ -27,6 +27,16 @@ func isOwned(name string) (bool, error) {
 	return false, nil
 }
 
+// installedSet turns the acron-owned unit names into a membership set for
+// O(1) "is this Job installed" lookups.
+func installedSet(owned []string) map[string]bool {
+	installed := make(map[string]bool, len(owned))
+	for _, name := range owned {
+		installed[name] = true
+	}
+	return installed
+}
+
 // readUnit returns a unit file's content, or "" when the file does not exist.
 // Any other I/O error is returned to the caller.
 func readUnit(path string) (string, error) {
@@ -54,10 +64,7 @@ func ApplyStates(cfg *config.Config) ([]JobState, error) {
 	if err != nil {
 		return nil, err
 	}
-	installed := make(map[string]bool, len(owned))
-	for _, name := range owned {
-		installed[name] = true
-	}
+	installed := installedSet(owned)
 
 	declared := make(map[string]bool, len(cfg.Jobs))
 	states := make([]JobState, 0, len(cfg.Jobs)+len(owned))

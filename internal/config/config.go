@@ -135,7 +135,9 @@ func validateJob(job Job, index int, seen map[string]bool) []string {
 
 	if job.Cwd == "" {
 		report("cwd is required")
-	} else if dir := paths.ExpandHome(job.Cwd); !isDir(dir) {
+	} else if dir := paths.ExpandHome(job.Cwd); !filepath.IsAbs(dir) {
+		report(fmt.Sprintf("cwd must be an absolute path: %s", job.Cwd))
+	} else if !isDir(dir) {
 		report(fmt.Sprintf("cwd does not exist: %s", dir))
 	}
 

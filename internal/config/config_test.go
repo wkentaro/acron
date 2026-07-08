@@ -32,6 +32,7 @@ func TestValidate(t *testing.T) {
 		{"missing prompt", func(j *Job) { j.Prompt = "" }, true},
 		{"missing cwd", func(j *Job) { j.Cwd = "" }, true},
 		{"nonexistent cwd", func(j *Job) { j.Cwd = dir + "/nope" }, true},
+		{"relative cwd", func(j *Job) { j.Cwd = "." }, true},
 		{"bad timeout", func(j *Job) { j.Timeout = "soon" }, true},
 		{"negative timeout", func(j *Job) { j.Timeout = "-5m" }, true},
 		{"zero timeout opts out", func(j *Job) { j.Timeout = "0" }, false},

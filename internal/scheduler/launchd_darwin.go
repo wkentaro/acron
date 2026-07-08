@@ -28,10 +28,7 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	installed := make(map[string]bool, len(owned))
-	for _, name := range owned {
-		installed[name] = true
-	}
+	installed := installedSet(owned)
 
 	plan := &Plan{}
 	desired := make(map[string]bool)

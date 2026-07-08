@@ -139,8 +139,10 @@ func validateJob(job Job, index int, seen map[string]bool) []string {
 		report(fmt.Sprintf("cwd does not exist: %s", dir))
 	}
 
-	if _, err := job.ResolvedTimeout(); err != nil {
+	if d, err := job.ResolvedTimeout(); err != nil {
 		report(fmt.Sprintf("invalid timeout %q: %v", job.Timeout, err))
+	} else if d < 0 {
+		report(fmt.Sprintf("invalid timeout %q: must not be negative (use 0 to opt out)", job.Timeout))
 	}
 
 	if len(job.Condition) > 0 && job.Condition[0] == "" {

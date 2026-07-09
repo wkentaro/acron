@@ -47,6 +47,26 @@ func readUnit(path string) (string, error) {
 	return string(content), nil
 }
 
+// scanOwnedJobs lists the acron-owned Jobs installed in dir, deriving each name
+// from a unit filename via jobName. A missing dir means no owned Jobs, not an
+// error. Each platform's ownedJobs wraps this with its own dir and parser.
+func scanOwnedJobs(dir string, jobName func(string) (string, bool)) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var jobs []string
+	for _, entry := range entries {
+		if job, ok := jobName(entry.Name()); ok {
+			jobs = append(jobs, job)
+		}
+	}
+	return jobs, nil
+}
+
 // ApplyStates reports each Job's ApplyState by performing the same comparison
 // apply does, read-only, plus any orphaned acron-owned units no longer in the
 // Config. Rows are the Config Jobs in order, followed by orphans sorted by name

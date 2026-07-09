@@ -285,20 +285,7 @@ func removeJob(name string) error {
 }
 
 func ownedJobs() ([]string, error) {
-	entries, err := os.ReadDir(paths.SystemdUserDir())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var jobs []string
-	for _, entry := range entries {
-		if job, ok := paths.TimerJobName(entry.Name()); ok {
-			jobs = append(jobs, job)
-		}
-	}
-	return jobs, nil
+	return scanOwnedJobs(paths.SystemdUserDir(), paths.TimerJobName)
 }
 
 // disable ignores errors: the timer may simply not be loaded.

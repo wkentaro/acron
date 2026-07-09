@@ -1,9 +1,38 @@
 package config
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestDefaultPath(t *testing.T) {
+	t.Run("ACRON_CONFIG wins", func(t *testing.T) {
+		t.Setenv("ACRON_CONFIG", "/custom/acron.toml")
+		t.Setenv("XDG_CONFIG_HOME", "/should/be/ignored")
+		if got := DefaultPath(); got != "/custom/acron.toml" {
+			t.Errorf("DefaultPath() = %q, want %q", got, "/custom/acron.toml")
+		}
+	})
+	t.Run("XDG_CONFIG_HOME wins", func(t *testing.T) {
+		t.Setenv("ACRON_CONFIG", "")
+		t.Setenv("XDG_CONFIG_HOME", "/xdg/config")
+		t.Setenv("HOME", "/should/be/ignored")
+		want := filepath.Join("/xdg/config", "acron", "config.toml")
+		if got := DefaultPath(); got != want {
+			t.Errorf("DefaultPath() = %q, want %q", got, want)
+		}
+	})
+	t.Run("falls back to home dir", func(t *testing.T) {
+		t.Setenv("ACRON_CONFIG", "")
+		t.Setenv("XDG_CONFIG_HOME", "")
+		t.Setenv("HOME", "/home/tester")
+		want := filepath.Join("/home/tester", ".config", "acron", "config.toml")
+		if got := DefaultPath(); got != want {
+			t.Errorf("DefaultPath() = %q, want %q", got, want)
+		}
+	})
+}
 
 func validJob(cwd string) Job {
 	return Job{

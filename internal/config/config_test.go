@@ -1,6 +1,10 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -125,5 +129,79 @@ func TestJobLookup(t *testing.T) {
 
 	if _, err := cfg.Job("missing"); err == nil {
 		t.Error("expected error for absent job")
+	}
+}
+
+func TestLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	toml := `[[job]]
+name = "nightly-triage"
+schedule = "0 2 * * *"
+agent = ["claude", "-p", "{prompt}"]
+prompt = "Triage open issues"
+cwd = "/srv/repo"
+timeout = "30m"
+enabled = false
+condition = ["sh", "-c", "true"]
+env = { API_KEY = "secret", LANG = "en_US.UTF-8" }
+
+[[job]]
+name = "weekly-digest"
+schedule = "0 9 * * 1"
+agent = ["codex"]
+prompt = "Summarize the week"
+cwd = "/srv/other"
+`
+	if err := os.WriteFile(path, []byte(toml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Jobs) != 2 {
+		t.Fatalf("len(Jobs) = %d, want 2", len(cfg.Jobs))
+	}
+
+	enabled := false
+	nightly := validJob("/srv/repo")
+	nightly.Timeout = "30m"
+	nightly.Enabled = &enabled
+	nightly.Env = map[string]string{"API_KEY": "secret", "LANG": "en_US.UTF-8"}
+	nightly.Condition = []string{"sh", "-c", "true"}
+	if !reflect.DeepEqual(cfg.Jobs[0], nightly) {
+		t.Errorf("Jobs[0] = %+v, want %+v", cfg.Jobs[0], nightly)
+	}
+
+	weekly := Job{
+		Name:     "weekly-digest",
+		Schedule: "0 9 * * 1",
+		Agent:    []string{"codex"},
+		Prompt:   "Summarize the week",
+		Cwd:      "/srv/other",
+	}
+	if !reflect.DeepEqual(cfg.Jobs[1], weekly) {
+		t.Errorf("Jobs[1] = %+v, want %+v", cfg.Jobs[1], weekly)
+	}
+}
+
+func TestLoadRejectsMalformedTOML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[[job]\nname = broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for malformed TOML")
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("error %q does not mention path %q", err, path)
+	}
+}
+
+func TestLoadRejectsMissingFile(t *testing.T) {
+	if _, err := Load(filepath.Join(t.TempDir(), "absent.toml")); err == nil {
+		t.Error("expected error for nonexistent config path")
 	}
 }

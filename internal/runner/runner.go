@@ -131,16 +131,24 @@ func runAgent(ctx context.Context, job config.Job, timeout time.Duration, lock *
 	return finishRun(job.Name, start, status, ReasonNone, exit, logName, argv)
 }
 
+// appendAndPrune appends rec to the Job's history, then prunes stale run logs.
+// Prune, not just trim: a flood of logless skips can evict an older
+// condition-skip record that did carry a log, and pruneRuns deletes that
+// now-unreferenced log file. trimHistory alone would orphan it on disk.
+func appendAndPrune(job string, rec Record) error {
+	if err := appendHistory(job, rec); err != nil {
+		return err
+	}
+	pruneRuns(job)
+	return nil
+}
+
 func recordSkipped(job string, reason Reason) (Result, error) {
 	now := time.Now().Format(time.RFC3339)
 	rec := Record{Start: now, End: now, Status: StatusSkipped, Reason: reason}
-	if err := appendHistory(job, rec); err != nil {
+	if err := appendAndPrune(job, rec); err != nil {
 		return Result{}, err
 	}
-	// Prune, not just trim: a flood of logless skips can evict an older
-	// condition-skip record that did carry a log, and pruneRuns deletes that
-	// now-unreferenced log file. trimHistory alone would orphan it on disk.
-	pruneRuns(job)
 	return Result{Status: StatusSkipped, Reason: reason}, nil
 }
 
@@ -155,10 +163,9 @@ func finishRun(job string, start time.Time, status Status, reason Reason, exit i
 		DurationS: int(duration.Seconds()),
 		Log:       logName,
 	}
-	if err := appendHistory(job, rec); err != nil {
+	if err := appendAndPrune(job, rec); err != nil {
 		return Result{}, err
 	}
-	pruneRuns(job)
 	return Result{
 		Status:   status,
 		Reason:   reason,

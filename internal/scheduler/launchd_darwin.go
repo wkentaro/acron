@@ -240,20 +240,7 @@ func removeJob(name string) error {
 }
 
 func ownedJobs() ([]string, error) {
-	entries, err := os.ReadDir(paths.LaunchAgentsDir())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var jobs []string
-	for _, entry := range entries {
-		if job, ok := paths.PlistJobName(entry.Name()); ok {
-			jobs = append(jobs, job)
-		}
-	}
-	return jobs, nil
+	return scanOwnedJobs(paths.LaunchAgentsDir(), paths.PlistJobName)
 }
 
 func domainTarget() string {

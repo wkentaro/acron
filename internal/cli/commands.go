@@ -757,7 +757,7 @@ func renderUnit(unit scheduler.UnitFile) string {
 // until that fire, no suffix) is derived from the same next-fire time so the two
 // always agree, and mirrors NEXT's placeholder when there is no computable fire.
 func renderNext(job config.Job, state scheduler.ApplyState, now time.Time) (next, left string) {
-	placeholder := commentStyle.Render("—")
+	placeholder := renderPlaceholder()
 	if state != scheduler.StateApplied {
 		return placeholder, placeholder
 	}
@@ -1170,7 +1170,7 @@ func runHistory(name string, limit int) error {
 		duration := renderRunDuration(run.rec)
 		if run.running {
 			status = runningStyle.Render(livePhaseRunning)
-			duration = commentStyle.Render("—")
+			duration = renderPlaceholder()
 		}
 		t.Row(cmdStyle.Render(run.job), when, passed, status, duration)
 	}
@@ -1197,9 +1197,15 @@ func recDuration(rec runner.Record) time.Duration {
 	return time.Duration(rec.DurationS) * time.Second
 }
 
+// renderPlaceholder is the em-dash a table cell shows when it has no value to
+// display: a non-applied job's next fire, or a running/skipped Run's duration.
+func renderPlaceholder() string {
+	return commentStyle.Render("—")
+}
+
 func renderRunDuration(rec runner.Record) string {
 	if rec.Status == runner.StatusSkipped {
-		return commentStyle.Render("—")
+		return renderPlaceholder()
 	}
 	return commentStyle.Render(formatDuration(recDuration(rec)))
 }

@@ -2,7 +2,11 @@
 
 package scheduler
 
-import "os"
+import (
+	"maps"
+	"os"
+	"slices"
+)
 
 func snapshotEnv() (map[string]string, error) {
 	home, err := os.UserHomeDir()
@@ -29,4 +33,8 @@ func mergeEnv(base, extra map[string]string) map[string]string {
 		merged[k] = v
 	}
 	return merged
+}
+
+func sortedKeys(env map[string]string) []string {
+	return slices.Sorted(maps.Keys(env))
 }

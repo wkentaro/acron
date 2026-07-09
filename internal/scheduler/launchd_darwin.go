@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -301,12 +300,7 @@ func renderPlist(job config.Job, self string, intervals []schedule.CalendarInter
 	writeString(&b, "WorkingDirectory", paths.ExpandHome(job.Cwd))
 
 	b.WriteString("  <key>EnvironmentVariables</key>\n  <dict>\n")
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
+	for _, k := range sortedKeys(env) {
 		fmt.Fprintf(&b, "    <key>%s</key>\n    <string>%s</string>\n", escape(k), escape(env[k]))
 	}
 	b.WriteString("  </dict>\n")

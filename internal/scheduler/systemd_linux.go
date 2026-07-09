@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"sort"
 	"strings"
 
 	"github.com/wkentaro/acron/internal/config"
@@ -334,12 +333,7 @@ func renderService(job config.Job, self string, env map[string]string) string {
 	b.WriteString("StandardOutput=null\n")
 	b.WriteString("StandardError=null\n")
 
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
+	for _, k := range sortedKeys(env) {
 		fmt.Fprintf(&b, "Environment=\"%s=%s\"\n", escapeEnv(k), escapeEnv(env[k]))
 	}
 	return b.String()

@@ -165,23 +165,13 @@ func Destroy() (*Plan, error) {
 }
 
 func jobApplyState(job config.Job, self string, base map[string]string, installed bool) (ApplyState, error) {
-	if !job.IsEnabled() {
-		if installed {
-			return StateDrifted, nil
+	return applyStateFrom(job.IsEnabled(), installed, func() (bool, error) {
+		service, timer, err := renderJob(job, self, base)
+		if err != nil {
+			return false, err
 		}
-		return StateDisabled, nil
-	}
-	if !installed {
-		return StateUnapplied, nil
-	}
-	service, timer, err := renderJob(job, self, base)
-	if err != nil {
-		return "", err
-	}
-	if unitsUnchanged(job.Name, service, timer) && isActive(job.Name) {
-		return StateApplied, nil
-	}
-	return StateDrifted, nil
+		return unitsUnchanged(job.Name, service, timer) && isActive(job.Name), nil
+	})
 }
 
 func renderJob(job config.Job, self string, base map[string]string) (service, timer string, err error) {

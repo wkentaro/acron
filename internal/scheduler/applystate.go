@@ -47,6 +47,30 @@ func readUnit(path string) (string, error) {
 	return string(content), nil
 }
 
+// applyStateFrom derives a Job's ApplyState from enabled/installed plus a
+// platform-specific converged check, the ADR-0011 decision tree shared by
+// launchd and systemd. converged reports whether the installed units match the
+// rendered Config and the timer is active/loaded.
+func applyStateFrom(enabled, installed bool, converged func() (bool, error)) (ApplyState, error) {
+	if !enabled {
+		if installed {
+			return StateDrifted, nil
+		}
+		return StateDisabled, nil
+	}
+	if !installed {
+		return StateUnapplied, nil
+	}
+	ok, err := converged()
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		return StateApplied, nil
+	}
+	return StateDrifted, nil
+}
+
 // ApplyStates reports each Job's ApplyState by performing the same comparison
 // apply does, read-only, plus any orphaned acron-owned units no longer in the
 // Config. Rows are the Config Jobs in order, followed by orphans sorted by name

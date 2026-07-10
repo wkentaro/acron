@@ -315,7 +315,7 @@ func Trigger(job string) error {
 func systemctl(args ...string) error {
 	out, err := exec.Command("systemctl", append([]string{"--user"}, args...)...).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("systemctl --user %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("systemctl --user %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

@@ -3,7 +3,9 @@
 package scheduler
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -174,5 +176,19 @@ func TestShow(t *testing.T) {
 func TestEscape(t *testing.T) {
 	if got := escape("a & b < c > d"); got != "a &amp; b &lt; c &gt; d" {
 		t.Errorf("escape = %q", got)
+	}
+}
+
+func TestLaunchctlWrapsExitError(t *testing.T) {
+	if _, err := exec.LookPath("launchctl"); err != nil {
+		t.Skip("launchctl not available")
+	}
+	err := launchctl("print", "system/acron-nonexistent-"+t.Name())
+	if err == nil {
+		t.Fatal("expected an error for a nonexistent service")
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Errorf("error does not unwrap to *exec.ExitError: %v", err)
 	}
 }

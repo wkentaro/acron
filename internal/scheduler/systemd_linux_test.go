@@ -3,7 +3,9 @@
 package scheduler
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -354,5 +356,19 @@ func TestEscapeEnv(t *testing.T) {
 	}
 	if got := escapeEnv("a%hb"); got != "a%%hb" {
 		t.Errorf("escapeEnv = %q", got)
+	}
+}
+
+func TestSystemctlWrapsExitError(t *testing.T) {
+	if _, err := exec.LookPath("systemctl"); err != nil {
+		t.Skip("systemctl not available")
+	}
+	err := systemctl("status", "acron-nonexistent-"+t.Name()+".timer")
+	if err == nil {
+		t.Fatal("expected an error for a nonexistent unit")
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Errorf("error does not unwrap to *exec.ExitError: %v", err)
 	}
 }

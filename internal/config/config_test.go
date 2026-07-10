@@ -1,6 +1,9 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -125,5 +128,50 @@ func TestJobLookup(t *testing.T) {
 
 	if _, err := cfg.Job("missing"); err == nil {
 		t.Error("expected error for absent job")
+	}
+}
+
+func writeConfig(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func jobConfig(extra string) string {
+	return `[[job]]
+name = "nightly-triage"
+schedule = "0 2 * * *"
+agent = ["claude", "-p", "{prompt}"]
+prompt = "Triage open issues"
+cwd = "/srv/repo"
+` + extra
+}
+
+func TestLoadAcceptsKnownKeys(t *testing.T) {
+	path := writeConfig(t, jobConfig(`enabled = false
+timeout = "30m"
+env = { TZ = "UTC" }
+condition = ["sh", "-c", "true"]
+`))
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Jobs) != 1 || cfg.Jobs[0].IsEnabled() {
+		t.Fatalf("Load = %+v, want one disabled job", cfg.Jobs)
+	}
+}
+
+func TestLoadRejectsUnknownKey(t *testing.T) {
+	path := writeConfig(t, jobConfig("enalbed = false\n"))
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for unknown key")
+	}
+	if !strings.Contains(err.Error(), "enalbed") {
+		t.Errorf("error = %q, want it to name the unknown key", err)
 	}
 }

@@ -73,8 +73,16 @@ func DefaultPath() string {
 
 func Load(path string) (*Config, error) {
 	var cfg Config
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+	md, err := toml.DecodeFile(path, &cfg)
+	if err != nil {
 		return nil, fmt.Errorf("read config %s: %w", path, err)
+	}
+	if undecoded := md.Undecoded(); len(undecoded) > 0 {
+		keys := make([]string, len(undecoded))
+		for i, key := range undecoded {
+			keys[i] = key.String()
+		}
+		return nil, fmt.Errorf("read config %s: unknown key(s): %s", path, strings.Join(keys, ", "))
 	}
 	return &cfg, nil
 }

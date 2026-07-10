@@ -13,6 +13,7 @@ and this project adheres to
 - `acron apply`/`config edit` now reject a Job whose `agent` command name is empty (`agent = [""]`) at validation time, instead of accepting the config and failing at every firing ([#103](https://github.com/wkentaro/acron/pull/103)).
 - `acron apply`/`config edit` now reject a negative `timeout` (e.g. `timeout = "-5m"`) at validation time; it previously passed validation but silently ran the agent unbounded, defeating the timeout guarantee (`0` remains the explicit opt-out) ([#108](https://github.com/wkentaro/acron/pull/108)).
 - `acron apply`/`config edit` now reject a non-absolute `cwd` at validation time; a relative path previously passed validation (resolved against the shell that ran the command) but the generated unit resolves `WorkingDirectory` against `/`, so every scheduled firing failed silently ([#111](https://github.com/wkentaro/acron/pull/111)).
+- Loading the Config now rejects an unrecognized key (e.g. a misspelled `enalbed`) instead of silently dropping it; a typo in an optional field like `enabled` or `condition` previously loaded cleanly with the field left at its default, so the safety gate or disabled flag the user wrote silently vanished ([#122](https://github.com/wkentaro/acron/pull/122)).
 
 ## [0.1.1] - 2026-07-01
 

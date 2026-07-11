@@ -637,7 +637,7 @@ func runFooter(result runner.Result, name string) string {
 	if result.Status != runner.StatusSkipped && result.Exit > 0 {
 		line += fmt.Sprintf("  exit %d", result.Exit)
 	}
-	return fmt.Sprintf("%s  %s", line, result.Duration.Round(time.Second))
+	return fmt.Sprintf("%s  %s", line, formatDuration(result.Duration))
 }
 
 func runTrigger(name string) error {

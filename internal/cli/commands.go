@@ -1425,15 +1425,26 @@ func renderPlan(plan *scheduler.Plan, header string, dryRun bool) string {
 	return b.String()
 }
 
+type planGroup struct {
+	names  []string
+	symbol string
+}
+
+// planGroups keeps the Created/Updated/Removed symbol mapping in one place so
+// writePlanSummary and writePlanDiffs cannot drift apart.
+func planGroups(plan *scheduler.Plan) []planGroup {
+	return []planGroup{
+		{names: plan.Created, symbol: addStyle.Render("+")},
+		{names: plan.Updated, symbol: runningStyle.Render("~")},
+		{names: plan.Removed, symbol: removeStyle.Render("-")},
+	}
+}
+
 func writePlanSummary(b *strings.Builder, plan *scheduler.Plan) {
-	for _, name := range plan.Created {
-		fmt.Fprintf(b, "  %s %s\n", addStyle.Render("+"), name)
-	}
-	for _, name := range plan.Updated {
-		fmt.Fprintf(b, "  %s %s\n", runningStyle.Render("~"), name)
-	}
-	for _, name := range plan.Removed {
-		fmt.Fprintf(b, "  %s %s\n", removeStyle.Render("-"), name)
+	for _, group := range planGroups(plan) {
+		for _, name := range group.names {
+			fmt.Fprintf(b, "  %s %s\n", group.symbol, name)
+		}
 	}
 }
 
@@ -1443,14 +1454,10 @@ func writePlanDiffs(b *strings.Builder, plan *scheduler.Plan) {
 		byName[change.Name] = change
 	}
 	var sections []string
-	for _, name := range plan.Created {
-		sections = append(sections, renderPlanChange(addStyle.Render("+"), name, byName[name]))
-	}
-	for _, name := range plan.Updated {
-		sections = append(sections, renderPlanChange(runningStyle.Render("~"), name, byName[name]))
-	}
-	for _, name := range plan.Removed {
-		sections = append(sections, renderPlanChange(removeStyle.Render("-"), name, byName[name]))
+	for _, group := range planGroups(plan) {
+		for _, name := range group.names {
+			sections = append(sections, renderPlanChange(group.symbol, name, byName[name]))
+		}
 	}
 	b.WriteString(strings.Join(sections, "\n"))
 }

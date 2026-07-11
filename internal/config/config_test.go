@@ -25,6 +25,8 @@ func TestValidate(t *testing.T) {
 		{"valid", nil, false},
 		{"missing name", func(j *Job) { j.Name = "" }, true},
 		{"bad name", func(j *Job) { j.Name = "Nightly Triage" }, true},
+		{"name starts with dash", func(j *Job) { j.Name = "-nightly" }, true},
+		{"name with leading underscore", func(j *Job) { j.Name = "_nightly" }, false},
 		{"missing schedule", func(j *Job) { j.Schedule = "" }, true},
 		{"bad schedule", func(j *Job) { j.Schedule = "not cron" }, true},
 		{"empty agent", func(j *Job) { j.Agent = nil }, true},

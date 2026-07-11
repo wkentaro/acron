@@ -79,7 +79,7 @@ func Load(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-var namePattern = regexp.MustCompile(`^[a-z0-9_-]+$`)
+var namePattern = regexp.MustCompile(`^[a-z0-9_][a-z0-9_-]*$`)
 
 var scheduleParser = cron.NewParser(
 	cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow,
@@ -110,7 +110,7 @@ func validateJob(job Job, index int, seen map[string]bool) []string {
 	case job.Name == "":
 		report("name is required")
 	case !namePattern.MatchString(job.Name):
-		report("name must match [a-z0-9_-]")
+		report("name must match [a-z0-9_-] and not start with '-'")
 	case seen[job.Name]:
 		report("duplicate name")
 	default:

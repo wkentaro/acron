@@ -495,7 +495,7 @@ acron history --limit 0       # Show all
 // jobFieldReference is the [[job]] schema, shared by 'config edit's seed
 // template and 'config --help' so the documented fields stay in sync.
 const jobFieldReference = `# [[job]]
-# name     = "nightly-triage"             # required, unique, [a-z0-9_-]
+# name     = "nightly-triage"             # required, unique, [a-z0-9_-], no leading '-'
 # schedule = "0 2 * * *"                  # required, 5-field cron
 # agent    = ["claude", "-p", "{prompt}", "--dangerously-skip-permissions", "--verbose", "--output-format", "stream-json"] # required argv; {prompt} is substituted
 #   stream-json gives live output for long sessions; for a short session, drop --verbose/--output-format for plain-text logs

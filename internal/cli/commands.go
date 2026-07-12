@@ -1343,6 +1343,15 @@ func runEdit() error {
 		fmt.Println("No changes.")
 		return nil
 	}
+	info, err := os.Stat(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err == nil {
+		if err := os.Chmod(tmpPath, info.Mode().Perm()); err != nil {
+			return err
+		}
+	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		return err
 	}

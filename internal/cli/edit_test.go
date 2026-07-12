@@ -214,6 +214,30 @@ func TestRunEditSeedsTemplateWhenNoConfig(t *testing.T) {
 	}
 }
 
+func TestRunEditPreservesFileMode(t *testing.T) {
+	dir, path := setupEditTest(t)
+
+	original := validConfig(dir)
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EDITOR", editorWriting(t, original+"# edited\n"))
+
+	if err := runEdit(); err != nil {
+		t.Fatalf("runEdit: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o644 {
+		t.Errorf("mode = %o, want 0644 preserved across edit", got)
+	}
+}
+
 func TestRunEditDoesNotEvalEditorAsShellCode(t *testing.T) {
 	dir, path := setupEditTest(t)
 	original := validConfig(dir)

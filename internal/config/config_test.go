@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -61,6 +62,40 @@ func TestValidateRejectsDuplicateName(t *testing.T) {
 	cfg := &Config{Jobs: []Job{validJob(dir), validJob(dir)}}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected duplicate-name error")
+	}
+}
+
+func TestValidateAggregatesAllProblems(t *testing.T) {
+	dir := t.TempDir()
+
+	nameless := validJob(dir)
+	nameless.Name = ""
+	nameless.Schedule = ""
+
+	named := validJob(dir)
+	named.Name = "beta"
+	named.Prompt = ""
+	named.Timeout = "soon"
+
+	err := (&Config{Jobs: []Job{nameless, named}}).Validate()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	wants := []string{
+		"job[0]: name is required",
+		"job[0]: schedule is required",
+		`job "beta": prompt is required`,
+		`job "beta": invalid timeout "soon"`,
+	}
+	for _, want := range wants {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q\nfull error: %v", want, err)
+		}
+	}
+
+	if got := strings.Count(err.Error(), "\n  "); got != len(wants) {
+		t.Errorf("expected exactly %d aggregated problems, got %d\nfull error: %v", len(wants), got, err)
 	}
 }
 

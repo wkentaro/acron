@@ -26,12 +26,8 @@ func snapshotEnv() (map[string]string, error) {
 
 func mergeEnv(base, extra map[string]string) map[string]string {
 	merged := make(map[string]string, len(base)+len(extra))
-	for k, v := range base {
-		merged[k] = v
-	}
-	for k, v := range extra {
-		merged[k] = v
-	}
+	maps.Copy(merged, base)
+	maps.Copy(merged, extra)
 	return merged
 }
 

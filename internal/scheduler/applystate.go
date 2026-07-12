@@ -4,6 +4,7 @@ package scheduler
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"sort"
@@ -11,6 +12,30 @@ import (
 	"github.com/wkentaro/acron/internal/config"
 	"github.com/wkentaro/acron/internal/paths"
 )
+
+// pruneOrphans removes each acron-owned unit no longer desired by the Config,
+// recording it in plan.Removed. On a dry run it captures the planned prune as a
+// diff via removeChange instead of removing anything.
+func pruneOrphans(plan *Plan, owned []string, desired map[string]bool, dryRun bool) error {
+	for _, name := range owned {
+		if desired[name] {
+			continue
+		}
+		plan.Removed = append(plan.Removed, name)
+		if dryRun {
+			change, err := removeChange(name)
+			if err != nil {
+				return fmt.Errorf("remove %s: %w", name, err)
+			}
+			plan.Changes = append(plan.Changes, change)
+			continue
+		}
+		if err := removeJob(name); err != nil {
+			return fmt.Errorf("remove %s: %w", name, err)
+		}
+	}
+	return nil
+}
 
 // isOwned reports whether an acron-owned unit is installed for name, using the
 // same scan apply and ApplyStates use.

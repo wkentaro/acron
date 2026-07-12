@@ -61,22 +61,8 @@ func Apply(cfg *config.Config, dryRun bool) (*Plan, error) {
 		}
 	}
 
-	for _, name := range owned {
-		if desired[name] {
-			continue
-		}
-		plan.Removed = append(plan.Removed, name)
-		if dryRun {
-			change, err := removeChange(name)
-			if err != nil {
-				return nil, fmt.Errorf("remove %s: %w", name, err)
-			}
-			plan.Changes = append(plan.Changes, change)
-			continue
-		}
-		if err := removeJob(name); err != nil {
-			return nil, fmt.Errorf("remove %s: %w", name, err)
-		}
+	if err := pruneOrphans(plan, owned, desired, dryRun); err != nil {
+		return nil, err
 	}
 
 	if dryRun || plan.Empty() {

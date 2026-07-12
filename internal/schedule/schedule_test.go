@@ -132,6 +132,9 @@ func TestToSystemd(t *testing.T) {
 		{"* * * * *", []string{"*-*-* *:*:00"}},
 		{"* 2 * * *", []string{"*-*-* 02:*:00"}},
 		{"*/15 * * * *", []string{"*-*-* *:00,15,30,45:00"}},
+		// A bare number with a step ("5/10") starts at the number and spans to
+		// the field max, stepping by the given amount.
+		{"5/10 * * * *", []string{"*-*-* *:05,15,25,35,45,55:00"}},
 		{"0 0,12 * * *", []string{"*-*-* 00,12:00:00"}},
 		{"0 9 * * 1-5", []string{"Mon,Tue,Wed,Thu,Fri *-*-* 09:00:00"}},
 		{"0 9-12 * * *", []string{"*-*-* 09,10,11,12:00:00"}},
@@ -218,6 +221,7 @@ func rejectCases() []string {
 		"x 2 * * *",     // not a number
 		"*/0 * * * *",   // zero step
 		"17-9 * * * *",  // descending range
-		"60-70 2 * * *", // range out of bounds
+		"60-70 2 * * *", // range out of bounds (low)
+		"1-99 * * * *",  // range out of bounds (high)
 	}
 }

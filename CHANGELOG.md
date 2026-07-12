@@ -13,6 +13,7 @@ and this project adheres to
 - `acron apply`/`config edit` now reject a Job whose `agent` command name is empty (`agent = [""]`) at validation time, instead of accepting the config and failing at every firing ([#103](https://github.com/wkentaro/acron/pull/103)).
 - `acron apply`/`config edit` now reject a negative `timeout` (e.g. `timeout = "-5m"`) at validation time; it previously passed validation but silently ran the agent unbounded, defeating the timeout guarantee (`0` remains the explicit opt-out) ([#108](https://github.com/wkentaro/acron/pull/108)).
 - `acron apply`/`config edit` now reject a non-absolute `cwd` at validation time; a relative path previously passed validation (resolved against the shell that ran the command) but the generated unit resolves `WorkingDirectory` against `/`, so every scheduled firing failed silently ([#111](https://github.com/wkentaro/acron/pull/111)).
+- Every command that loads the Config (`apply`, `status`, `run`, `trigger`, `logs`, `history`, `show`) now reports a missing config with the same first-run hint `config show` already gave (`no config at <path>; run "acron config edit" to create one`), instead of leaking a raw `read config ...: no such file or directory` error ([#130](https://github.com/wkentaro/acron/pull/130)).
 
 ## [0.1.1] - 2026-07-01
 

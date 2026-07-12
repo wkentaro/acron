@@ -39,3 +39,18 @@ func TestRunConfigShowErrorsWhenMissing(t *testing.T) {
 		t.Errorf("error %q should hint at \"acron config edit\"", err)
 	}
 }
+
+func TestLoadConfigHintsWhenMissing(t *testing.T) {
+	_, path := setupEditTest(t)
+
+	_, err := loadConfig()
+	if err == nil {
+		t.Fatal("expected error for missing config, got nil")
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("error %q should mention path %q", err, path)
+	}
+	if !strings.Contains(err.Error(), "acron config edit") {
+		t.Errorf("error %q should hint at \"acron config edit\"", err)
+	}
+}

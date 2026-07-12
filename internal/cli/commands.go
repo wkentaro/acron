@@ -26,7 +26,12 @@ import (
 )
 
 func loadConfig() (*config.Config, error) {
-	return loadAndValidate(config.DefaultPath())
+	path := config.DefaultPath()
+	cfg, err := loadAndValidate(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, missingConfigError(path)
+	}
+	return cfg, err
 }
 
 func completeJobNames(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
@@ -112,6 +117,10 @@ func loadAndValidate(path string) (*config.Config, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+func missingConfigError(path string) error {
+	return fmt.Errorf("no config at %s; run \"acron config edit\" to create one", path)
 }
 
 func newApplyCmd() *cobra.Command {
@@ -1291,7 +1300,7 @@ func runConfigShow() error {
 	path := config.DefaultPath()
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("no config at %s; run \"acron config edit\" to create one", path)
+		return missingConfigError(path)
 	}
 	if err != nil {
 		return err

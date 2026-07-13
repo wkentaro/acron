@@ -1123,9 +1123,11 @@ func runHistory(name string, limit int) error {
 		if err != nil {
 			return err
 		}
+		var lastStart time.Time
 		for _, rec := range records {
 			start, _ := time.Parse(time.RFC3339, rec.Start)
 			runs = append(runs, jobRun{job: job.Name, rec: rec, start: start})
+			lastStart = start
 		}
 		since, ok := runner.RunningSince(job.Name)
 		if !ok || since.IsZero() {
@@ -1133,11 +1135,11 @@ func runHistory(name string, limit int) error {
 		}
 		// The lock outlives the final record by a hair: a just-finished Run can
 		// still hold it after its record is on disk. Drop the synthetic row when
-		// the newest record is that same Run, so it never shows up twice.
-		if n := len(records); n > 0 {
-			if last, err := time.Parse(time.RFC3339, records[n-1].Start); err == nil && last.Equal(since) {
-				continue
-			}
+		// the newest record is that same Run, so it never shows up twice. since is
+		// non-zero here, so an empty history (or a failed parse) leaves a zero
+		// lastStart that never matches.
+		if lastStart.Equal(since) {
+			continue
 		}
 		runs = append(runs, jobRun{
 			job:     job.Name,
